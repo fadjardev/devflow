@@ -27,6 +27,7 @@ so the venv is built on the system Python.
 | --- | --- |
 | `devflow/bot.py` | Telegram commands, chat-id allow-list, `/ask` follow-ups by reply |
 | `devflow/pipeline.py` | the phases: plan → gate 1 → code → verify → review → gate 2 → close; `/ask` answers |
+| `devflow/fmt.py` | the Markdown agents write → Telegram HTML, split without breaking code blocks |
 | `devflow/logs.py` | logging setup: `runtime/*.log`, each line tagged with its task; backs `/log` |
 | `devflow/sync.py` | fetch, base branch, other unmerged branches, merge simulation |
 | `devflow/tasks.py` | task notes, the state machine, project-note writes |

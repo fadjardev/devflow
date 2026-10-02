@@ -29,8 +29,13 @@ def resolve(vault_root: Path, query: str) -> str:
         if len(hits) == 1:
             return hits[0]
         if len(hits) > 1:
-            raise VaultError(f"'{query}' is ambiguous: {', '.join(hits)}")
-    raise VaultError(f"no project matches '{query}'. Known: {', '.join(all_names)}")
+            raise VaultError(f"“{query}” matches more than one project:\n{_bullets(hits)}\n\nUse more of the name.")
+    raise VaultError(f"No project matches “{query}”. The projects are:\n{_bullets(all_names)}\n\n"
+                     f"Any unique part of a name works, e.g. asm.")
+
+
+def _bullets(items: list[str]) -> str:
+    return "\n".join(f"- {i}" for i in items)
 
 
 def checkout(settings: Settings, project: str) -> Path:

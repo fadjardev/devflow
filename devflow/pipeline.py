@@ -250,7 +250,8 @@ class Flow:
                 raise RuntimeError(f"couldn't answer: {_clip(res.text, 500)}")
             log.info("answered (%d chars, $%.2f)", len(res.text), res.cost_usd)
             follow = dataclasses.replace(target, session=res.session_id or target.session)
-            return f"{res.text.strip()}\n\n— {target.label} · ${res.cost_usd:.2f} · reply to this to follow up", follow
+            footer = f"_{target.label} · ${res.cost_usd:.2f} · reply to this message to follow up_"
+            return f"{res.text.strip()}\n\n{footer}", follow
         finally:
             logs.task_id.reset(token)
 

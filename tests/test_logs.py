@@ -94,7 +94,7 @@ def test_notifier_retries_once_then_drops_without_raising(logdir, monkeypatch):
         def __init__(self, fail):
             self.fail = fail
 
-        async def send_message(self, chat, text):
+        async def send_message(self, chat, text, parse_mode=None):
             if self.fail:
                 self.fail -= 1
                 raise NetworkError("down")

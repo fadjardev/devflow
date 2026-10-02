@@ -7,40 +7,70 @@ so the bot gives a stranger nothing to probe.
 from __future__ import annotations
 
 import asyncio
+import re
 import io
 import logging
 from collections import OrderedDict
 from pathlib import Path
 
-from telegram import Update
-from telegram.constants import ChatAction
-from telegram.error import NetworkError, RetryAfter, TimedOut
+from telegram import BotCommand, BotCommandScopeChat, Update
+from telegram.constants import ChatAction, ParseMode
+from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import logs
+from . import fmt, logs
 from .config import Settings
 from .pipeline import Asked, Flow, FlowError
 from .tasks import ID_RE
 from .vault import VaultError
 
 log = logging.getLogger("devflow")
-LIMIT = 4000  # Telegram caps a message at 4096 characters
 
-HELP = """devflow — Claude plans and reviews, opencode codes, you approve.
+# Telegram renders in a proportional font, so no column alignment: one command per
+# line, grouped under headings. HTML parse mode; arguments in italics.
+HELP = """<b>devflow</b>
+Claude plans and reviews, opencode codes, you approve.
 
-/task <project> <request>   new task (project: name or unique part, e.g. asm)
-/ask <project|all> <question>  ask about the code; reply to the answer to follow up
-/status                     active tasks
-/show <id>                  spec, last review, history
-/approve <id>               pass gate 1 (plan) or gate 2 (diff)
-/reject <id> <why>          send the plan back to the planner, or the diff back to the worker
-/answer <id> <answer>       answer a planner's question (same as /reject)
-/diff <id>                  the full diff as a file
-/retry <id>                 resume a blocked task
-/refresh <id>               update a reviewed task onto the latest shared branch
-/stop <id>                  cancel; the branch is kept
-/log [<id>|<n>]             last n warnings/errors (default 5), or one task's log lines
-"""
+<b>📝 Start</b>
+/task <i>project request</i>: new task
+/ask <i>project question</i>: ask about the code (<i>all</i> for every project). Reply to the answer to follow up.
+
+<b>✅ Decide</b>
+/approve <i>id</i>: approve the plan (gate 1) or the diff (gate 2)
+/reject <i>id reason</i>: send it back with your reason
+/answer <i>id answer</i>: answer the planner's question
+
+<b>👀 Follow</b>
+/status: active tasks
+/show <i>id</i>: spec, last review, history
+/diff <i>id</i>: the full diff as a file
+/log: recent warnings and errors
+/log <i>id</i>: one task's log lines
+
+<b>🔧 Fix</b>
+/retry <i>id</i>: resume a blocked task
+/refresh <i>id</i>: catch up with the latest development branch
+/stop <i>id</i>: cancel the task (the branch is kept)
+
+<i>project</i> is the full name or any unique part of it, e.g. <i>asm</i>.
+<i>id</i> looks like 261002-01."""
+
+# The menu Telegram shows when you type "/".
+MENU = [
+    ("task", "New task: /task <project> <request>"),
+    ("ask", "Ask about a project: /ask <project|all> <question>"),
+    ("status", "Active tasks"),
+    ("approve", "Approve the plan or the diff: /approve <id>"),
+    ("reject", "Send it back: /reject <id> <reason>"),
+    ("answer", "Answer the planner: /answer <id> <answer>"),
+    ("show", "Spec, review, history: /show <id>"),
+    ("diff", "Full diff as a file: /diff <id>"),
+    ("log", "Recent errors, or /log <id>"),
+    ("retry", "Resume a blocked task: /retry <id>"),
+    ("refresh", "Catch up with development: /refresh <id>"),
+    ("stop", "Cancel a task: /stop <id>"),
+    ("help", "All commands"),
+]
 
 
 class TelegramNotifier:
@@ -67,9 +97,9 @@ class TelegramNotifier:
         log.error("Telegram still rate-limited, %s dropped", what)
 
     async def text(self, message: str) -> None:
-        for i in range(0, len(message), LIMIT):
-            chunk = message[i:i + LIMIT]
-            await self._send(f"message {chunk[:60]!r}", lambda: self.app.bot.send_message(self.chat_id, chunk))
+        for chunk in fmt.split(message):
+            send = lambda text, mode: self.app.bot.send_message(self.chat_id, text, parse_mode=mode)  # noqa: E731
+            await self._send(f"message {chunk[:60]!r}", lambda: _deliver(send, chunk))
 
     async def photo(self, path: Path, caption: str) -> None:
         async def send():
@@ -88,9 +118,19 @@ def _args(update: Update, n: int) -> list[str]:
     return parts[1:]
 
 
-async def _reply(update: Update, text: str) -> None:
-    for i in range(0, len(text), LIMIT):
-        await update.effective_message.reply_text(text[i:i + LIMIT])
+async def _deliver(send, chunk: str):
+    """Send one piece as HTML; if Telegram can't parse it, send the original text plainly."""
+    try:
+        return await send(fmt.to_html(chunk), ParseMode.HTML)
+    except BadRequest as e:
+        log.warning("Telegram rejected the formatting (%s); sending plain text", e)
+        return await send(chunk, None)
+
+
+async def _reply(update: Update, text: str) -> list:
+    """Reply with Markdown-ish text (see fmt), split as needed. Returns the sent messages."""
+    send = lambda t, mode: update.effective_message.reply_text(t, parse_mode=mode)  # noqa: E731
+    return [await _deliver(send, chunk) for chunk in fmt.split(text)]
 
 
 def _handler(fn):
@@ -114,7 +154,7 @@ def _handler(fn):
 
 @_handler
 async def cmd_help(update: Update, ctx):
-    await _reply(update, HELP)
+    await update.effective_message.reply_text(HELP, parse_mode=ParseMode.HTML)
 
 
 @_handler
@@ -200,8 +240,7 @@ async def _answer(update: Update, ctx: ContextTypes.DEFAULT_TYPE, target: Asked,
     try:
         text, follow = await _flow(ctx).ask(target, question)
         asked: OrderedDict = ctx.application.bot_data.setdefault("asks", OrderedDict())
-        for i in range(0, len(text), LIMIT):
-            sent = await update.effective_message.reply_text(text[i:i + LIMIT])
+        for sent in await _reply(update, text):
             asked[sent.message_id] = follow  # replying to any part of the answer follows up
         while len(asked) > ASK_MEMORY:
             asked.popitem(last=False)
@@ -224,7 +263,10 @@ async def cmd_ask(update: Update, ctx):
     args = _args(update, 2)
     if len(args) < 2:
         raise FlowError("usage: /ask <project|all> <question>\ne.g. /ask asm where is the stock opname total computed?")
-    target = _flow(ctx).ask_target(args[0])  # an unknown project fails now, not minutes later
+    try:  # an unknown project fails now, not minutes later
+        target = _flow(ctx).ask_target(args[0])
+    except VaultError as e:
+        raise FlowError(f"{e}\n\nThe project comes first: /ask asm where is login handled?") from None
     await update.effective_chat.send_action(ChatAction.TYPING)
     await _reply(update, f"🤔 looking into {target.label}…")
     _start_answer(update, ctx, target, args[1])
@@ -247,17 +289,25 @@ async def cmd_log(update: Update, ctx):
     arg = args[0] if args else ""
     if ID_RE.fullmatch(arg):
         found = logs.tail(logs.path(), 30, task=arg) + logs.tail(logs.path("mcp"), 10, task=arg)
-        title = f"log lines for {arg}"
+        title, empty = f"Log for {arg}", f"Nothing logged for {arg}."
     else:
         count = min(int(arg), 20) if arg.isdigit() else 5
         found = logs.tail(logs.path(errors=True), count) + logs.tail(logs.path("mcp", errors=True), 3)
-        title = "last warnings/errors"
+        title, empty = "Recent warnings and errors", "✅ No warnings or errors logged."
     if not found:
-        await _reply(update, f"No {title}.")
+        await _reply(update, empty)
         return
-    # Newest last, and each traceback trimmed to its end, where the cause is.
-    body = "\n\n".join(e if len(e) <= 900 else "…" + e[-900:] for e in found)
-    await _reply(update, f"📜 {title} (runtime/devflow.log)\n\n{body[-(LIMIT * 2):]}")
+    # One code block per entry, newest last; a long traceback keeps its end, where the cause is.
+    blocks = [f"```\n{_compact(e if len(e) <= 900 else '…' + e[-900:])}\n```" for e in found]
+    await _reply(update, f"📜 **{title}**\n_runtime\\devflow.log, newest last_\n\n" + "\n\n".join(blocks))
+
+
+_STAMP = re.compile(r"^\d{4}-(\d\d-\d\d \d\d:\d\d):\d\d,\d+ (\w+)\s+", re.M)
+
+
+def _compact(entry: str) -> str:
+    """`2026-10-02 15:06:10,800 WARNING  [-] ...` -> `10-02 15:06 WARNING [-] ...` (fits a phone)."""
+    return _STAMP.sub(r"\1 \2 ", entry)
 
 
 async def _on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -286,6 +336,11 @@ def build(settings: Settings) -> Application:
         logs.watch_loop(asyncio.get_running_loop())
         flow = Flow(settings, TelegramNotifier(app, settings.allowed_chat_id))
         app.bot_data["flow"] = flow
+        try:  # only in the allowed chat: a stranger who finds the bot sees no menu
+            await app.bot.set_my_commands([BotCommand(c, d) for c, d in MENU],
+                                          scope=BotCommandScopeChat(settings.allowed_chat_id))
+        except Exception:
+            log.warning("could not set the command menu", exc_info=True)
         await flow.recover()
         await flow.n.text("🟢 devflow up. /help")
 

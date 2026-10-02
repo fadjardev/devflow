@@ -81,7 +81,7 @@ class Msg:
         Msg._next += 1
         self.message_id = Msg._next
 
-    async def reply_text(self, text):
+    async def reply_text(self, text, parse_mode=None):
         m = Msg(text)
         self.sent.append(m)
         return m
