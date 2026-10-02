@@ -81,10 +81,22 @@ def link_untracked(settings: Settings, project_dir: Path, wt: Path) -> list[str]
     return done
 
 
+def _must_exclude(wt: Path, rel: str) -> bool:
+    """A linked path needs an explicit exclude only if git would otherwise stage it: present,
+    untracked, and not ignored. Ignored paths are skipped by `add -A` anyway, and naming one
+    in a pathspec makes git fail ("paths are ignored"). Tracked paths were never linked (the
+    worktree has its own copy), so the worker's edits to them must be committed."""
+    if not (wt / rel).exists():
+        return False
+    tracked = run(wt, "ls-files", "--error-unmatch", "--", rel).returncode == 0
+    ignored = run(wt, "check-ignore", "-q", "--", rel).returncode == 0
+    return not tracked and not ignored
+
+
 def commit(settings: Settings, wt: Path, message: str) -> str | None:
     """Stage everything except the linked paths; returns the new sha, or None if nothing changed.
     In the middle of a merge this concludes the merge, even if the merge itself changed nothing."""
-    pathspec = ["."] + [f":(exclude){p}" for p in settings.link_paths]
+    pathspec = ["."] + [f":(exclude){p}" for p in settings.link_paths if _must_exclude(wt, p)]
     git(wt, "add", "-A", "--", *pathspec)
     merging = run(wt, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
     if not merging and not git(wt, "diff", "--cached", "--name-only"):
