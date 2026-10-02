@@ -1,0 +1,26 @@
+[project]
+name = "devflow"
+version = "0.1.0"
+description = "Telegram-driven Claude Code (plan/review) + opencode (code) workflow over an Obsidian task vault"
+requires-python = ">=3.10"
+dependencies = [
+    "python-telegram-bot>=21",
+    "httpx>=0.27",
+    "pyyaml>=6",
+    "mcp>=2.2,<3",
+    "playwright>=1.45",
+    "python-dotenv>=1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["devflow"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
