@@ -169,6 +169,15 @@ class Client:
         except httpx.HTTPError as e:
             log.warning("could not abort opencode session %s: %s", session, e)
 
+    async def dispose(self, directory: Path) -> None:
+        """opencode keeps an instance, with a file watcher, for every directory it has worked in.
+        On Windows the watcher's open handle stops the folder from being deleted ("Permission
+        denied" from `git worktree remove`), so dispose of it before removing a worktree."""
+        try:
+            await self.http.post("/instance/dispose", params={"directory": str(directory)}, timeout=15)
+        except httpx.HTTPError as e:  # no server running means no watcher either
+            log.info("no opencode instance to dispose for %s (%s)", directory, e)
+
     async def close(self) -> None:
         await self.http.aclose()
         if self._server and self._server.poll() is None:

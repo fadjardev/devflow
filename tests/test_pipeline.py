@@ -38,7 +38,7 @@ class FakeOpencode:
     """First prompt: the task's change. Conflict prompts: resolve markers in shared.txt."""
 
     def __init__(self):
-        self.prompts = []
+        self.prompts, self.disposed = [], []
 
     async def ensure_server(self):
         pass
@@ -59,6 +59,9 @@ class FakeOpencode:
 
     async def abort(self, session, directory):
         pass
+
+    async def dispose(self, directory):
+        self.disposed.append(Path(directory))
 
     async def close(self):
         pass
@@ -155,10 +158,47 @@ def test_full_task_with_fixup_round(setup):
         return flow.store.get(t.id)
 
     done = asyncio.run(scenario())
-    assert done.state == "done" and done.meta["worktree"] == ""
+    assert done.state == "done" and done.meta["worktree"] == "" and done.meta["closed"] is True
     assert done.meta["branch"] in g(repo, "branch", "--list", done.meta["branch"])
     assert g(repo, "branch", "--show-current") == "development"
     assert calls[-1] is claude.CLOSER_TOOLS
+    assert len(flow.oc.disposed) == 1  # opencode let go of the worktree before it was removed
+
+
+def test_close_survives_a_locked_worktree_and_retry_finishes_it(setup, monkeypatch):
+    """On Windows a process inside the worktree makes `git worktree remove` fail with
+    "Permission denied". The close must still record the result, warn, and /retry must finish."""
+    flow = setup[0]
+    real_remove = worktree.remove
+    attempts = []
+
+    def flaky_remove(pdir, wt):
+        attempts.append(wt)
+        if len(attempts) == 1:
+            raise worktree.GitError("git worktree remove --force x: error: failed to delete 'x': Permission denied")
+        real_remove(pdir, wt)
+
+    monkeypatch.setattr(pipeline.worktree, "remove", flaky_remove)
+
+    async def scenario():
+        t = await plan_and_code(flow)
+        await flow.approve(t.id)
+        await settle(flow, t.id)
+        first = flow.store.get(t.id)
+        assert first.state == "done" and first.meta["closed"] is False and first.meta["worktree"]
+        assert "Couldn't clean up" in flow.n.texts[-1] and "Permission denied" in flow.n.texts[-1]
+        assert first.note.section("Result").count("Branch `") == 1
+
+        assert "finishing the close" in await flow.retry(t.id)
+        await settle(flow, t.id)
+        return flow.store.get(t.id)
+
+    final = asyncio.run(scenario())
+    assert final.meta["closed"] is True and final.meta["worktree"] == ""
+    assert final.note.section("Result").count("Branch `") == 1  # not written twice
+    assert "Couldn't clean up" not in flow.n.texts[-1]
+    with pytest.raises(FlowError, match="is done"):
+        asyncio.run(flow.retry(final.id))
 
 
 def test_base_is_fetched_shared_branch_not_local_head(setup):

@@ -96,13 +96,16 @@ class Flow:
             raise
         except Exception as e:  # any failure parks the task where a human can see it
             log.exception("%s failed after %.0fs", phase, time.monotonic() - started)
+            state = "?"
             try:
-                t = self.store.get(task_id)
-                if t.state in ("new", "planned", "coding", "review"):
+                state = self.store.get(task_id).state
+                if state in ("new", "planned", "coding", "review"):
                     self.store.transition(task_id, "blocked", "bot", f"{type(e).__name__}: {e}")
+                    state = "blocked"
             except Exception:
                 log.exception("could not mark %s blocked", task_id)
-            await self.notify(f"⛔ {task_id} blocked in {phase}: {type(e).__name__}: {_clip(str(e), 600)}\n"
+            what = {"blocked": "blocked", "done": "approved, but closing it failed"}.get(state, "failed")
+            await self.notify(f"⛔ {task_id} {what} in {phase}: {type(e).__name__}: {_clip(str(e), 600)}\n"
                                f"/retry {task_id} · /show {task_id} · /log {task_id}")
         finally:
             self.jobs.pop(task_id, None)
@@ -188,13 +191,18 @@ class Flow:
             await asyncio.gather(job, return_exceptions=True)
         if t.meta.get("opencode_session") and t.meta.get("worktree"):
             await self.oc.abort(t.meta["opencode_session"], Path(t.meta["worktree"]))
-        await self._cleanup(task_id)
+        leftovers = await self._cleanup(task_id)
         self.store.transition(task_id, "cancelled", "bot", "stopped from Telegram")
         branch = t.meta.get("branch")
-        return f"🛑 {task_id} cancelled." + (f" Branch `{branch}` kept." if branch else "")
+        return f"🛑 {task_id} cancelled." + (f" Branch `{branch}` kept." if branch else "") + leftovers
 
     async def retry(self, task_id: str) -> str:
         t = self.store.get(task_id)
+        if task_id in self.jobs:
+            raise FlowError(f"{task_id} is still working; wait for it")
+        if t.state == "done" and not t.meta.get("closed"):  # approved, but closing stopped part-way
+            self._spawn(task_id, self._close(task_id))
+            return f"🔁 {task_id} finishing the close."
         if t.state != "blocked":
             raise FlowError(f"{task_id} is {t.state}, not blocked")
         to = t.meta.get("blocked_from") or "new"
@@ -508,29 +516,55 @@ class Flow:
         await self.n.text(f"🔁 {task_id} review round {rnd} asked for fixes:\n{_clip(fix, 1200)}")
         await self._work(task_id, fixup=fix)
 
-    async def _cleanup(self, task_id: str) -> None:
+    async def _cleanup(self, task_id: str) -> str:
+        """Remove the temp vhost and the worktree. A failure is logged and returned as a warning
+        for the human, never raised: leftovers must not stop a task being closed or cancelled.
+        Whatever couldn't be removed stays in the note, so the next try goes after it again."""
         t = self.store.get(task_id)
+        problems, done = [], {}
         if t.meta.get("vhost"):
-            await asyncio.to_thread(vhost.remove, self.s, task_id)
+            try:
+                await asyncio.to_thread(vhost.remove, self.s, task_id)
+                done["vhost"] = ""
+            except Exception as e:
+                log.exception("could not remove the temp vhost")
+                problems.append(f"temp vhost `{t.meta['vhost']}`: {_clip(str(e), 300)}")
         if t.meta.get("worktree"):
-            await asyncio.to_thread(worktree.remove, self._project_dir(t), Path(t.meta["worktree"]))
-        self.store.update(task_id, worktree="", vhost="")
+            wt = Path(t.meta["worktree"])
+            await self.oc.dispose(wt)  # else opencode's file watcher keeps the folder locked
+            try:
+                await asyncio.to_thread(worktree.remove, self._project_dir(t), wt)
+                done["worktree"] = ""
+            except Exception as e:
+                log.exception("could not remove the worktree")
+                problems.append(f"worktree `{wt}`: {_clip(str(e), 300)}")
+        if done:
+            self.store.update(task_id, **done)
+        if not problems:
+            return ""
+        return ("\n\n⚠️ Couldn't clean up:\n" + "\n".join(f"- {p}" for p in problems) +
+                f"\n/retry {task_id} tries again; see Troubleshooting to do it by hand.")
 
     async def _close(self, task_id: str) -> None:
-        await self._cleanup(task_id)
+        """Clean up, record the result, let the closer note what's worth keeping. Each step is
+        marked done in the note, so /retry after a failure picks up where it stopped."""
+        leftovers = await self._cleanup(task_id)
         t = self.store.get(task_id)
         pdir = self._project_dir(t)
-        commits = worktree.git(pdir, "log", "--oneline", f"{t.meta['base']}..{t.meta['branch']}")
-        self.store.append(task_id, "Result",
-                          f"Branch `{t.meta['branch']}` from `{t.meta.get('base_ref') or 'base'}` @ `{t.meta['base'][:10]}`"
-                          f" — merged cleanly in simulation at approval; not merged, not pushed.\n\n"
-                          f"```\n{commits}\n```")
+        if not t.meta.get("result_written"):
+            commits = worktree.git(pdir, "log", "--oneline", f"{t.meta['base']}..{t.meta['branch']}")
+            self.store.append(task_id, "Result",
+                              f"Branch `{t.meta['branch']}` from `{t.meta.get('base_ref') or 'base'}` @ `{t.meta['base'][:10]}`"
+                              f" — merged cleanly in simulation at approval; not merged, not pushed.\n\n"
+                              f"```\n{commits}\n```")
+            self.store.update(task_id, result_written=True)
         res = await claude.run(self.s, _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
                                pdir, claude.CLOSER_TOOLS, add_dirs=(self.s.vault,), timeout=600)
         if not res.ok:
             log.error("closer failed: %s", _clip(res.text, 500))
+        self.store.update(task_id, closed=not leftovers)
         recorded = _clip(res.text, 400) if res.ok else "(closer failed; nothing recorded)"
-        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n{recorded}")
+        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n{recorded}{leftovers}")
 
     async def close(self) -> None:
         for job in list(self.jobs.values()):
