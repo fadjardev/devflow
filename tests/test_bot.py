@@ -18,3 +18,37 @@ def test_help_is_valid_telegram_html():
     for t in set(tags):
         assert bot.HELP.count(f"<{t}>") == bot.HELP.count(f"</{t}>")
     assert "&" not in re.sub(r"&(amp|lt|gt);", "", bot.HELP)  # a bare & breaks parsing
+
+
+def test_replies_retry_a_timeout_but_not_a_bad_request(monkeypatch):
+    import asyncio
+
+    import pytest
+    from telegram.error import BadRequest, TimedOut
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(bot.asyncio, "sleep", lambda s: real_sleep(0))
+
+    class Msg:
+        def __init__(self, errors):
+            self.errors, self.sent = list(errors), []
+
+        async def reply_text(self, text, parse_mode=None):
+            if self.errors:
+                raise self.errors.pop(0)
+            self.sent.append(text)
+            return text
+
+    class Update:
+        def __init__(self, msg):
+            self.effective_message = msg
+
+    flaky = Msg([TimedOut("Timed out")])
+    assert asyncio.run(bot._reply(Update(flaky), "hello")) == ["hello"]
+
+    refused = Msg([BadRequest("Message to reply not found")] * 3)
+    with pytest.raises(BadRequest):
+        asyncio.run(bot._reply(Update(refused), "hello"))
+    assert len(refused.errors) == 1  # tried as HTML, then plain text; never retried on top
+
+    assert bot._transient(TimedOut("x")) and not bot._transient(BadRequest("x"))

@@ -73,39 +73,48 @@ MENU = [
 ]
 
 
+def _transient(e: Exception) -> bool:
+    """A network problem worth retrying. BadRequest subclasses NetworkError in PTB, but it
+    means Telegram refused the request itself; sending it again won't help."""
+    return isinstance(e, (TimedOut, NetworkError)) and not isinstance(e, BadRequest)
+
+
+async def _retry(what: str, call):
+    """One retry on a network blip or flood limit. After that the message is logged and
+    dropped (returns None), so a Telegram outage never fails the task or command it reports on."""
+    for attempt in (1, 2):
+        try:
+            return await call()
+        except RetryAfter as e:
+            wait = float(getattr(e.retry_after, "total_seconds", lambda: e.retry_after)())
+            log.warning("Telegram flood limit; retrying %s in %.0fs", what, wait)
+            await asyncio.sleep(wait)
+        except Exception as e:
+            if not _transient(e):
+                raise
+            if attempt == 2:
+                log.error("Telegram send failed, %s dropped: %s", what, e)
+                return None
+            log.warning("Telegram send failed (%s); retrying %s", e, what)
+            await asyncio.sleep(3)
+    log.error("Telegram still rate-limited, %s dropped", what)
+    return None
+
+
 class TelegramNotifier:
     def __init__(self, app: Application, chat_id: int):
         self.app, self.chat_id = app, chat_id
 
-    async def _send(self, what: str, call) -> None:
-        """One retry on a network blip or flood limit. After that the message is logged
-        and dropped, so a Telegram outage never fails the task it reports on."""
-        for attempt in (1, 2):
-            try:
-                await call()
-                return
-            except RetryAfter as e:
-                wait = float(getattr(e.retry_after, "total_seconds", lambda: e.retry_after)())
-                log.warning("Telegram flood limit; retrying %s in %.0fs", what, wait)
-                await asyncio.sleep(wait)
-            except (TimedOut, NetworkError) as e:
-                if attempt == 2:
-                    log.error("Telegram send failed, %s dropped: %s", what, e)
-                    return
-                log.warning("Telegram send failed (%s); retrying %s", e, what)
-                await asyncio.sleep(3)
-        log.error("Telegram still rate-limited, %s dropped", what)
-
     async def text(self, message: str) -> None:
         for chunk in fmt.split(message):
             send = lambda text, mode: self.app.bot.send_message(self.chat_id, text, parse_mode=mode)  # noqa: E731
-            await self._send(f"message {chunk[:60]!r}", lambda: _deliver(send, chunk))
+            await _retry(f"message {chunk[:60]!r}", lambda: _deliver(send, chunk))
 
     async def photo(self, path: Path, caption: str) -> None:
         async def send():
             with open(path, "rb") as f:
                 await self.app.bot.send_photo(self.chat_id, f, caption=caption[:1000])
-        await self._send(f"photo {path.name}", send)
+        await _retry(f"photo {path.name}", send)
 
 
 def _flow(ctx: ContextTypes.DEFAULT_TYPE) -> Flow:
@@ -130,7 +139,8 @@ async def _deliver(send, chunk: str):
 async def _reply(update: Update, text: str) -> list:
     """Reply with Markdown-ish text (see fmt), split as needed. Returns the sent messages."""
     send = lambda t, mode: update.effective_message.reply_text(t, parse_mode=mode)  # noqa: E731
-    return [await _deliver(send, chunk) for chunk in fmt.split(text)]
+    sent = [await _retry(f"reply {chunk[:60]!r}", lambda: _deliver(send, chunk)) for chunk in fmt.split(text)]
+    return [m for m in sent if m is not None]
 
 
 def _handler(fn):
@@ -154,7 +164,7 @@ def _handler(fn):
 
 @_handler
 async def cmd_help(update: Update, ctx):
-    await update.effective_message.reply_text(HELP, parse_mode=ParseMode.HTML)
+    await _retry("help", lambda: update.effective_message.reply_text(HELP, parse_mode=ParseMode.HTML))
 
 
 @_handler
@@ -313,7 +323,7 @@ def _compact(entry: str) -> str:
 async def _on_error(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Errors outside command handlers: polling, the job queue, Telegram itself."""
     err = ctx.error
-    if isinstance(err, (NetworkError, TimedOut)):  # transient; polling retries on its own
+    if isinstance(err, Exception) and _transient(err):  # polling retries on its own
         log.warning("Telegram network error: %s", err)
         return
     log.error("unhandled error (update %s)", getattr(update, "update_id", "-"),
@@ -349,7 +359,12 @@ def build(settings: Settings) -> Application:
         if flow:
             await flow.close()
 
-    app = Application.builder().token(settings.telegram_token).post_init(on_start).post_shutdown(on_stop).build()
+    # PTB's default 5-second timeouts are too tight for this connection to Telegram (seen:
+    # ConnectTimeout on the TLS handshake), so give every request more room.
+    app = (Application.builder().token(settings.telegram_token)
+           .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(10)
+           .get_updates_connect_timeout(20).get_updates_read_timeout(40)
+           .post_init(on_start).post_shutdown(on_stop).build())
     me = filters.Chat(chat_id=settings.allowed_chat_id)
     for name, fn in [("start", cmd_help), ("help", cmd_help), ("task", cmd_task), ("status", cmd_status),
                      ("show", cmd_show), ("approve", cmd_approve), ("reject", cmd_reject), ("answer", cmd_reject),
