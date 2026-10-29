@@ -358,3 +358,7 @@ Bug reports, fixes and work that makes devflow run on more setups are welcome.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, code and
 commit conventions, and the extra care needed around the safety model.
 Please report security problems privately, not in a public issue.
+
+## License
+
+[MIT](LICENSE)
