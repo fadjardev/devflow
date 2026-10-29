@@ -351,3 +351,10 @@ cause and `/retry`.
 The suite runs the whole pipeline with faked agents against real git
 repositories, including a colleague pushing concurrently, conflicts and
 `/refresh`, `/stop`, restart recovery, and a failing phase being parked.
+
+## Contributing
+
+Bug reports, fixes and work that makes devflow run on more setups are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, code and
+commit conventions, and the extra care needed around the safety model.
+Please report security problems privately, not in a public issue.
