@@ -32,8 +32,9 @@ nothing.
   review. A strong model does the judgment, a cheaper one does the typing, and
   the strong model still reads every diff.
 - **Control.** Agents work unattended, but nothing they do counts until you
-  approve it. devflow never merges, never pushes, and never touches your base
-  branch.
+  approve it. devflow itself never merges, never pushes, and never touches your
+  base branch. The agents are restricted, not sandboxed (see
+  [Safety model](#safety-model)).
 - **Evidence over claims.** devflow verifies the change itself rather than
   trusting the agent's report.
 - **Away from the desk.** Start, steer, approve, or stop work from your phone.
@@ -113,28 +114,60 @@ Messages from any other chat are ignored without a reply.
 
 ## Safety model
 
-Prompts alone are not a security boundary, so the important rules are enforced
-by tooling:
+> **Read this before pointing devflow at code you don't fully trust.** The
+> agents run as your own user account, with no OS-level sandbox. The rules below
+> stop an agent that is behaving normally. An agent that has been steered by
+> malicious text it read (prompt injection from a file, commit message, branch
+> or web page) can get around several of them. Run devflow only on
+> repositories you trust, on a machine or user account whose credentials
+> you're willing to expose to the worker.
+
+Prompts alone are not a security boundary, so devflow configures each tool's
+permission system as tightly as it can. Here is what that does and doesn't
+cover today.
 
 - **Claude** runs headless with `--permission-mode dontAsk` and a per-role
-  allow-list: read, search, read-only git, and the devflow-mcp tools that role
-  needs. Write, Edit, `git push/commit/checkout`, and reading secret files
-  (`DENY_READ`) are always denied.
-- **opencode** runs with a per-session ruleset: secret files unreadable, no git
-  commands that change history or branches, no access outside its worktree. A
-  watchdog rejects any permission prompt that would otherwise hang with nobody at
-  the terminal, and tells you on Telegram. Each worker run is capped at 45 minutes.
+  allow-list: read, search, read-only git subcommands, and the devflow-mcp tools
+  that role needs. Write, Edit, `git push/commit/checkout`, and the Read tool on
+  secret files (`DENY_READ`) are denied.
+  *Not yet covered:* the git rules match by prefix, so some arguments of
+  `git diff`/`git log` (`--no-index`, `--output`) may still read or write files
+  outside these rules.
+- **opencode** runs with a per-session ruleset. Its file tools can't read
+  `DENY_READ` files or reach outside the worktree, and a list of history- and
+  branch-changing `git` commands is denied. A watchdog rejects any permission
+  prompt that would otherwise hang with nobody at the terminal, and tells you on
+  Telegram. Each worker run is capped at 45 minutes.
+  *Not yet covered:* the worker's **shell is otherwise unrestricted**. Shell
+  commands can read secret files, reach the network, write outside the
+  worktree (including the main checkout's `.git` hooks and config), and get
+  around the git denylist. If a non-interactive git credential is configured,
+  that includes pushing. Folders linked into the worktree (`LINK_PATHS`) point at
+  your main checkout, so writes inside them land there and don't appear in the
+  diff.
 - **devflow-mcp** exposes five narrow tools (read a task, change its state along
   the allowed transitions, append to a section, add a decision, update a project
   note). File names come from validated ids and existing project names, never
   from free text, and every path must stay inside the task, request, or project
-  folders of the vault.
-- **Git**: devflow commits only on its own `devflow/...` branches. It never
-  merges, pushes, force-pushes, or touches your base branch or your main checkout.
+  folders of the vault. Agents can't take a human gate.
+  *Not yet covered:* the tools aren't scoped to the agent's own task or role, so
+  any agent, the worker included, can write to other tasks and to project
+  notes. That includes a task's spec after you approved it at gate 1.
+- **Git**: devflow's own git operations commit only on its `devflow/...`
+  branches. devflow never merges, pushes, or force-pushes, and never changes
+  your base branch or your main checkout's working tree. (This covers what
+  devflow does, not what a misbehaving worker's shell could do; see above.)
+- **Telegram**: only the allowed chat is answered. If that chat is a group,
+  every member can issue every command. Specs, diffs, `/ask` answers and
+  `/log` excerpts go through Telegram's servers.
 
-Things it does *not* protect: a secret that was ever committed is still visible
-through read-only `git log -p`; and code and data you let the agents read go to
-whichever model providers you configure.
+Also not protected: a secret that was ever committed is still visible through
+read-only `git log -p`. Code and data the agents read go to whichever model
+providers you configure. Tests and checks run the worker's code as your user.
+
+Closing these gaps (deny-by-default worker shell, git hook protection, scoped
+MCP tools, user-level allow-list, log redaction, and an optional worker
+sandbox) is planned work.
 
 ## Verification
 
@@ -318,3 +351,14 @@ cause and `/retry`.
 The suite runs the whole pipeline with faked agents against real git
 repositories, including a colleague pushing concurrently, conflicts and
 `/refresh`, `/stop`, restart recovery, and a failing phase being parked.
+
+## Contributing
+
+Bug reports, fixes and work that makes devflow run on more setups are welcome.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, code and
+commit conventions, and the extra care needed around the safety model.
+Please report security problems privately, not in a public issue.
+
+## License
+
+[MIT](LICENSE)
