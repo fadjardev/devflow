@@ -79,8 +79,9 @@ def setup(name: str = "devflow", console: bool = True, rotate: bool = True) -> N
         log.critical("uncaught exception", exc_info=(kind, value, tb))
 
     def thread_uncaught(args: threading.ExceptHookArgs) -> None:
+        exc = args.exc_value or args.exc_type()
         log.error("uncaught exception in thread %s", args.thread.name if args.thread else "?",
-                  exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+                  exc_info=(args.exc_type, exc, args.exc_traceback))
 
     sys.excepthook = uncaught
     threading.excepthook = thread_uncaught

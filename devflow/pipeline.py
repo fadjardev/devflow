@@ -281,7 +281,7 @@ class Flow:
         return (f"{t.id} · {t.project} · {t.state}\n{t.meta.get('title_line') or t.meta.get('title')}\n"
                 f"branch: {t.meta.get('branch') or '-'}   base: {t.meta.get('base_ref') or '-'} "
                 f"{(t.meta.get('base') or '')[:8]}   vhost: {t.meta.get('vhost') or '-'}\n\n"
-                f"SPEC\n{_clip(n.section('Spec'), 1800)}\n\nLAST REVIEW\n{_clip(n.section('Review'), 800)}\n\n"
+                f"SPEC\n{_clip(n.section('Spec') or '', 1800)}\n\nLAST REVIEW\n{_clip(n.section('Review') or '', 800)}\n\n"
                 f"HISTORY\n{history}")
 
     def diff(self, task_id: str) -> str:
@@ -317,7 +317,7 @@ class Flow:
         self.store.update(task_id, claude_session=res.session_id,
                           title_line=title.group(0).removeprefix("TITLE:").strip() if title else "")
         if t.state == "blocked":  # the planner gave up and asked a question
-            await self.n.text(f"❓ {task_id} needs you:\n{_clip(t.note.section('History').splitlines()[-1], 800)}\n"
+            await self.n.text(f"❓ {task_id} needs you:\n{_clip((t.note.section('History') or '-').splitlines()[-1], 800)}\n"
                               f"/answer {task_id} <answer> · /stop {task_id}")
             return
         if not (t.note.section("Spec") or "").strip():
@@ -332,7 +332,7 @@ class Flow:
         stale = "" if fetched.ok else f"\n\n{fetched.note()}"
         await self.n.text(
             f"📋 {task_id} planned — {t.meta.get('title_line') or t.meta.get('title')}\n\n"
-            f"{_clip(t.note.section('Spec'), 2500)}{warn}{stale}\n\n"
+            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}\n\n"
             f"/approve {task_id} · /reject {task_id} <why> · /show {task_id}"
         )
 
@@ -390,7 +390,7 @@ class Flow:
 
         t = self.store.get(task_id)
         if t.state == "blocked":
-            await self.n.text(f"❓ {task_id} worker gave up: {_clip(t.note.section('History').splitlines()[-1], 600)}\n"
+            await self.n.text(f"❓ {task_id} worker gave up: {_clip((t.note.section('History') or '-').splitlines()[-1], 600)}\n"
                               f"/show {task_id} · /retry {task_id} · /stop {task_id}")
             return
         if reply:
