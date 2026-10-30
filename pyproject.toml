@@ -58,7 +58,8 @@ module = [
     "devflow.tasks",
     "devflow.vault",
     "devflow.verify",
-    "devflow.vhost",
+    "devflow.vhosts",
+    "devflow.vhosts.*",
     "devflow.worktree",
 ]
 disallow_untyped_calls = true

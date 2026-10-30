@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 
-from . import config, projects, security
+from . import config, projects, security, vhosts
 
 
 def doctor(settings: config.Settings, fix: bool = False) -> int:
@@ -33,13 +32,13 @@ def doctor(settings: config.Settings, fix: bool = False) -> int:
          else f"allowed: {', '.join(settings.worker_shell_allow) or 'nothing'}")
     for exe in ("claude", "opencode", "git"):
         line(bool(shutil.which(exe)), f"{exe} on PATH", shutil.which(exe) or "")
-    nginx = settings.nginx_prefix / "current" / "nginx.exe"
-    if nginx.is_file():
-        t = subprocess.run([str(nginx), "-p", str(settings.nginx_prefix).rstrip("\\/") + "/", "-t"],
-                           cwd=settings.nginx_prefix, capture_output=True, text=True)
-        line(t.returncode == 0, "nginx -t", (t.stderr.strip().splitlines() or [""])[-1])
-    else:
-        line(False, "nginx", f"not found at {nginx}")
+    try:
+        sites: vhosts.Provider | None = vhosts.get(settings)
+    except (ValueError, vhosts.VhostError) as e:
+        sites = None
+        line(False, "vhost provider", str(e))
+    for good, what, detail in sites.doctor() if sites else []:
+        line(good, what, detail)
     try:
         from playwright.sync_api import sync_playwright
         with sync_playwright() as pw:
@@ -56,10 +55,10 @@ def doctor(settings: config.Settings, fix: bool = False) -> int:
         except ValueError as e:
             print(f"  --   {name}: {e}")
             continue
-        vh = projects.find_vhost(settings, pdir)
-        php = projects.php_exe(settings, vh.port) if vh else None
-        print(f"  {'ok ' if vh else '-- '}  {name}: " +
-              (f"https://{vh.host} (php {vh.port}{'' if php else ', no php.exe'})" if vh else "no vhost (HTTP checks skipped)"))
+        site = sites.find(pdir) if sites else None
+        print(f"  {'ok ' if site else '-- '}  {name}: " +
+              (f"https://{site.host}" + ("" if site.php else " (no PHP CLI found)") if site
+               else "no vhost (HTTP checks skipped)"))
     return 0 if ok else 1
 
 

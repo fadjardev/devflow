@@ -17,7 +17,7 @@ from pathlib import Path
 from string import Template
 from typing import Protocol
 
-from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhost, worktree
+from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhosts, worktree
 from .config import Settings, prompts_dir, runtime_dir
 from .tasks import TaskStore
 from .vault import VaultError
@@ -409,15 +409,18 @@ class Flow:
         guard = await asyncio.to_thread(gitsafe.fingerprint, wt)
         links = await asyncio.to_thread(lambda: worktree.snapshot(wt, worktree.linked_dirs(self.s, wt)))
         host, note = "", ""
-        vh = projects.find_vhost(self.s, pdir)
-        if vh:
+        sites = vhosts.get(self.s)
+        site = sites.find(pdir)
+        if site:
             try:
-                host = await asyncio.to_thread(vhost.create, self.s, vh, t.id, wt)
-            except vhost.VhostError as e:
+                host = await asyncio.to_thread(sites.create, site, t.id, wt)
+            except vhosts.VhostError as e:
                 log.warning("no temporary vhost: %s", e)
                 note = f"\n⚠️ no temporary vhost: {_clip(str(e), 300)}"
+        elif sites.name == "none":
+            note = "\nno vhost provider is configured; HTTP checks will be skipped"
         else:
-            note = "\n⚠️ no devcrate vhost serves this project; HTTP checks will be skipped"
+            note = f"\n⚠️ no {sites.name} vhost serves this project; HTTP checks will be skipped"
         self.store.transition(t.id, "coding", "bot", f"plan approved; base {ref} {base[:8]}", branch=branch,
                               base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="",
                               git_guard=guard, link_guard=links)
@@ -479,10 +482,9 @@ class Flow:
         t = self.store.get(task_id)
         wt, pdir = Path(t.meta["worktree"]), self._project_dir(t)
         changed = await asyncio.to_thread(worktree.changed_files, wt, t.meta["base"])
-        vh = projects.find_vhost(self.s, pdir)
-        php = projects.php_exe(self.s, vh.port) if vh else None
-        ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, php,
-                              vh.host if vh else None, t.meta.get("vhost") or None,
+        site = vhosts.get(self.s).find(pdir)
+        ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, site.php if site else None,
+                              site.host if site else None, t.meta.get("vhost") or None,
                               unsafe_before=self.s.before_unsafe_methods, env_allow=self.s.check_env_allow)
 
         ref, fetched = await self._sync(pdir)
@@ -590,7 +592,7 @@ class Flow:
         problems, done = [], {}
         if t.meta.get("vhost"):
             try:
-                await asyncio.to_thread(vhost.remove, self.s, task_id)
+                await asyncio.to_thread(vhosts.get(self.s).remove, task_id)
                 done["vhost"] = ""
             except Exception as e:
                 log.exception("could not remove the temp vhost")

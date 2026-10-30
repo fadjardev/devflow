@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from devflow import vhost
-from devflow.projects import Vhost
+from devflow.vhosts import devcrate as vhost
+from devflow.vhosts.devcrate import Vhost
 
 CONF = """# asm.qhomemart.test
 server {

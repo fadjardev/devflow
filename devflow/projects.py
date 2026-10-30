@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from . import vault
@@ -54,51 +51,3 @@ def directory(settings: Settings, project: str) -> Path:
     if not (path / ".git").exists():
         raise VaultError(f"{project}: {path} is not a git checkout")
     return path
-
-
-@dataclass(frozen=True)
-class Vhost:
-    conf: Path
-    host: str
-    project_segment: str  # first path segment after `projects/` in `root`
-    root_rest: str        # anything after it, e.g. "public"
-    port: int             # FastCGI port, 90XY -> PHP X.Y
-
-
-_SERVER = re.compile(r"server\s*\{")
-_NAME = re.compile(r"^\s*server_name\s+([^;\s]+)", re.M)
-_ROOT = re.compile(r"^\s*root\s+projects/([^/;\s]+)/?([^;\s]*)\s*;", re.M)
-_PORT = re.compile(r"fastcgi_pass\s+127\.0\.0\.1:(\d+)")
-
-
-def sites_dir(settings: Settings) -> Path:
-    return settings.nginx_prefix / "conf" / "sites"
-
-
-def find_vhost(settings: Settings, project_dir: Path) -> Vhost | None:
-    target = os.path.realpath(project_dir)
-    for conf in sorted(sites_dir(settings).glob("*.conf")):
-        if conf.name.startswith("devflow-"):
-            continue
-        text = conf.read_text(encoding="utf-8", errors="replace")
-        root = _ROOT.search(text)
-        if not root:
-            continue
-        seg_path = settings.projects / root.group(1)
-        if os.path.realpath(seg_path) != target:
-            continue
-        name = _NAME.search(text)
-        port = _PORT.search(text)
-        if not (name and port):
-            continue
-        return Vhost(conf, name.group(1), root.group(1), root.group(2).strip("/"), int(port.group(1)))
-    return None
-
-
-def php_exe(settings: Settings, port: int) -> Path | None:
-    """FastCGI port 90XY is served by php\\php-X.Y; use that version's CLI for linting."""
-    digits = str(port - 9000)
-    if len(digits) != 2:
-        return None
-    exe = settings.devcrate_root / "php" / f"php-{digits[0]}.{digits[1]}" / "php.exe"
-    return exe if exe.is_file() else None

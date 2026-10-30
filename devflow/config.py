@@ -33,7 +33,8 @@ def _bool(value: str) -> bool:
 class Settings:
     vault: Path
     projects: Path
-    devcrate_root: Path
+    devcrate_root: Path | None = None
+    vhost_provider: str = "devcrate"  # none | devcrate
     telegram_token: str = ""
     allowed_chat_id: int = 0
     allowed_user_ids: list[int] = field(default_factory=list)  # required when the chat is a group
@@ -58,10 +59,6 @@ class Settings:
     @property
     def worktrees(self) -> Path:
         return self.projects / ".worktrees"
-
-    @property
-    def nginx_prefix(self) -> Path:
-        return self.devcrate_root / "nginx"
 
 
 def load() -> Settings:
