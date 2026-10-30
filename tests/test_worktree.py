@@ -1,5 +1,7 @@
 import dataclasses
+import os
 import subprocess
+import sys
 
 from devflow import config, worktree
 
@@ -35,3 +37,18 @@ def test_commit_handles_ignored_tracked_and_untracked_linked_paths(tmp_path):
     committed = set(g(repo, "show", "--name-only", "--format=", "HEAD").splitlines())
     assert committed == {"config.php", "new.php"}
     assert "local.cfg" in g(repo, "status", "--porcelain")  # left alone, not committed
+
+
+def test_is_link_sees_junctions_and_symlinks_but_not_folders(tmp_path):
+    """worktree.remove unlinks these before deleting the worktree; on Python 3.11 there is
+    no os.path.isjunction, so junctions must be recognised another way."""
+    target = tmp_path / "vendor"
+    target.mkdir()
+    link = tmp_path / "link"
+    if sys.platform == "win32":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+    assert worktree._is_link(str(link))
+    assert not worktree._is_link(str(target))
