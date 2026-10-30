@@ -9,8 +9,16 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PROMPTS_DIR = REPO_ROOT / "prompts"
-RUNTIME_DIR = REPO_ROOT / "runtime"
+
+
+def runtime_dir() -> Path:
+    """Logs, MCP configs, locks, screenshots. DEVFLOW_RUNTIME also reaches the MCP server
+    processes devflow starts, so they write where the bot does."""
+    return Path(os.environ.get("DEVFLOW_RUNTIME") or REPO_ROOT / "runtime")
+
+
+def prompts_dir() -> Path:
+    return REPO_ROOT / "prompts"
 
 
 def _list(value: str) -> list[str]:

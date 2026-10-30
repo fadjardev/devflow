@@ -22,7 +22,7 @@ from types import TracebackType
 from typing import Any
 
 from . import redact, security
-from .config import RUNTIME_DIR
+from .config import runtime_dir
 
 task_id: contextvars.ContextVar[str] = contextvars.ContextVar("devflow_task", default="-")
 
@@ -42,13 +42,13 @@ class _TaskTag(logging.Filter):
 
 
 def path(name: str = "devflow", errors: bool = False) -> Path:
-    return RUNTIME_DIR / (f"{name}-errors.log" if errors else f"{name}.log")
+    return runtime_dir() / (f"{name}-errors.log" if errors else f"{name}.log")
 
 
 def setup(name: str = "devflow", console: bool = True, rotate: bool = True) -> None:
     """Configure the root logger. `rotate=False` for processes that run several at once
     (the MCP server): Windows cannot rename a log another process holds open."""
-    security.private_dir(RUNTIME_DIR)
+    security.private_dir(runtime_dir())
 
     def file(p: Path, keep: int) -> logging.Handler:
         if rotate:

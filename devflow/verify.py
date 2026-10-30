@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from . import platform
-from .config import RUNTIME_DIR
+from .config import runtime_dir
 
 log = logging.getLogger("devflow.verify")
 
@@ -220,7 +220,7 @@ async def run(task_id: str, spec: str, wt: Path, changed: list[str], php: Path |
     shot = None
     first_get = next((c for c in checks if c.method.upper() == "GET"), None)
     if first_get and after_host:
-        shot = await screenshot(after_host, first_get.path, RUNTIME_DIR / "shots" / f"{task_id}.png")
+        shot = await screenshot(after_host, first_get.path, runtime_dir() / "shots" / f"{task_id}.png")
         parts.append(f"**screenshot**: {'taken' if shot else 'failed (see bot log)'} — `{first_get.path}`")
 
     verdict = "PASS" if ok else "FAIL"

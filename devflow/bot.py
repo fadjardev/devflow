@@ -21,7 +21,7 @@ from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from . import fmt, logs, redact
-from .config import RUNTIME_DIR, Settings
+from .config import Settings, runtime_dir
 from .pipeline import Asked, Flow, FlowError
 from .tasks import ID_RE
 from .vault import VaultError
@@ -233,7 +233,7 @@ async def cmd_diff(update: Update, ctx):
     if not patch:
         raise FlowError("empty diff")
     if not flow.s.share_code_via_telegram:
-        saved = RUNTIME_DIR / "diffs" / f"{args[0]}.diff"
+        saved = runtime_dir() / "diffs" / f"{args[0]}.diff"
         saved.parent.mkdir(parents=True, exist_ok=True)
         saved.write_text(patch, encoding="utf-8")
         await _reply(update, f"{flow.diff_stat(args[0])}\n\nCode isn't sent to Telegram "

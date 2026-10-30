@@ -18,7 +18,7 @@ from string import Template
 from typing import Protocol
 
 from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhost, worktree
-from .config import PROMPTS_DIR, RUNTIME_DIR, Settings
+from .config import Settings, prompts_dir, runtime_dir
 from .tasks import TaskStore
 from .vault import VaultError
 
@@ -53,7 +53,7 @@ class Asked:
 
 
 def _prompt(name: str, **values) -> str:
-    return Template((PROMPTS_DIR / f"{name}.md").read_text(encoding="utf-8")).safe_substitute(values)
+    return Template((prompts_dir() / f"{name}.md").read_text(encoding="utf-8")).safe_substitute(values)
 
 
 def _clip(text: str, limit: int = 1500) -> str:
@@ -156,7 +156,7 @@ class Flow:
 
     def _notes(self, name: str, project: str) -> Path:
         """The notes Claude may read for this run: a copy of the project's notes, not the vault."""
-        return tasks.copy_view(self.s.vault, RUNTIME_DIR / "notes" / name, project)
+        return tasks.copy_view(self.s.vault, runtime_dir() / "notes" / name, project)
 
     def _unsafe(self) -> str:
         """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""

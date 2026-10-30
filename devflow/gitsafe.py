@@ -19,7 +19,7 @@ import os
 import subprocess
 from pathlib import Path, PurePosixPath
 
-from .config import RUNTIME_DIR
+from .config import runtime_dir
 
 
 class UnsafeGit(ValueError):
@@ -28,7 +28,7 @@ class UnsafeGit(ValueError):
 
 def _no_hooks_dir() -> str:
     """An empty folder for core.hooksPath, so git finds no hooks wherever .git says they are."""
-    path = RUNTIME_DIR / "no-hooks"
+    path = runtime_dir() / "no-hooks"
     path.mkdir(parents=True, exist_ok=True)
     return str(path)
 

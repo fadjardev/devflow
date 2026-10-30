@@ -19,7 +19,7 @@ def doctor(settings: config.Settings, fix: bool = False) -> int:
 
     print("devflow doctor")
     line(bool(settings.telegram_token), "TELEGRAM_TOKEN set")
-    for what, path in ((".env", config.REPO_ROOT / ".env"), ("runtime folder", config.RUNTIME_DIR)):
+    for what, path in ((".env", config.REPO_ROOT / ".env"), ("runtime folder", config.runtime_dir())):
         loose = security.loose_permissions(path)
         if loose and fix:
             security.restrict(path)

@@ -22,6 +22,12 @@ Demo.
 """
 
 
+@pytest.fixture(autouse=True)
+def _runtime(tmp_path, monkeypatch):
+    """Every test writes its runtime files (logs, MCP configs, locks) under its own tmp_path."""
+    monkeypatch.setenv("DEVFLOW_RUNTIME", str(tmp_path / "runtime"))
+
+
 @pytest.fixture
 def vault(tmp_path):
     (tmp_path / "01-Projects").mkdir()
@@ -52,7 +58,7 @@ def logdir(tmp_path, monkeypatch):
 
     root = logging.getLogger()
     saved = (list(root.handlers), root.level, sys.excepthook, threading.excepthook)
-    monkeypatch.setattr(logs, "RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setenv("DEVFLOW_RUNTIME", str(tmp_path / "runtime"))
     logs.setup("devflow", console=False)
     yield tmp_path / "runtime"
     for h in list(root.handlers):
