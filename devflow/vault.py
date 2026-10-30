@@ -62,7 +62,7 @@ def locked(path: Path, timeout: float = 15.0):
                     lock.unlink()
                     continue
             if time.monotonic() > deadline:
-                raise TimeoutError(f"note is locked: {path}")
+                raise TimeoutError(f"note is locked: {path}") from None
             time.sleep(0.05)
     try:
         yield
@@ -92,7 +92,7 @@ class Note:
     _snapshot: dict | None = None
 
     @classmethod
-    def parse(cls, text: str) -> "Note":
+    def parse(cls, text: str) -> Note:
         m = _FM.match(text)
         if not m:
             return cls({}, text)

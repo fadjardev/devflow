@@ -7,9 +7,10 @@ so the bot gives a stranger nothing to probe.
 from __future__ import annotations
 
 import asyncio
-import re
+import functools
 import io
 import logging
+import re
 from collections import OrderedDict
 from pathlib import Path
 
@@ -86,7 +87,8 @@ async def _retry(what: str, call):
         try:
             return await call()
         except RetryAfter as e:
-            wait = float(getattr(e.retry_after, "total_seconds", lambda: e.retry_after)())
+            after = e.retry_after  # seconds, or a timedelta in newer PTB
+            wait = float(after.total_seconds() if hasattr(after, "total_seconds") else after)
             log.warning("Telegram flood limit; retrying %s in %.0fs", what, wait)
             await asyncio.sleep(wait)
         except Exception as e:
@@ -108,7 +110,7 @@ class TelegramNotifier:
     async def text(self, message: str) -> None:
         for chunk in fmt.split(message):
             send = lambda text, mode: self.app.bot.send_message(self.chat_id, text, parse_mode=mode)  # noqa: E731
-            await _retry(f"message {chunk[:60]!r}", lambda: _deliver(send, chunk))
+            await _retry(f"message {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
 
     async def photo(self, path: Path, caption: str) -> None:
         async def send():
@@ -139,7 +141,8 @@ async def _deliver(send, chunk: str):
 async def _reply(update: Update, text: str) -> list:
     """Reply with Markdown-ish text (see fmt), split as needed. Returns the sent messages."""
     send = lambda t, mode: update.effective_message.reply_text(t, parse_mode=mode)  # noqa: E731
-    sent = [await _retry(f"reply {chunk[:60]!r}", lambda: _deliver(send, chunk)) for chunk in fmt.split(text)]
+    sent = [await _retry(f"reply {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
+            for chunk in fmt.split(text)]
     return [m for m in sent if m is not None]
 
 

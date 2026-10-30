@@ -83,7 +83,7 @@ async def run(settings: Settings, prompt: str, cwd: Path, tools: list[str],
     try:
         # The prompt goes in on stdin: Windows caps a command line at ~32k characters.
         out, err = await asyncio.wait_for(proc.communicate(prompt.encode("utf-8")), timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         log.error("claude -p timed out after %ds in %s", timeout, cwd)
         return Result(f"claude timed out after {int(timeout)}s", "", False)
