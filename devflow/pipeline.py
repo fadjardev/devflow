@@ -17,8 +17,8 @@ from pathlib import Path
 from string import Template
 from typing import Protocol
 
-from . import claude, logs, opencode, projects, sync, tasks, verify, vhost, worktree
-from .config import PROMPTS_DIR, Settings
+from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhost, worktree
+from .config import PROMPTS_DIR, RUNTIME_DIR, Settings
 from .tasks import TaskStore
 from .vault import VaultError
 
@@ -30,6 +30,7 @@ ASK_SLOTS = 2  # questions answered at once; more wait their turn
 ALL_PROJECTS = ("all", "*")
 _TITLE = re.compile(r"TITLE:\s*(\w+)(?:\(([^)]*)\))?!?:\s*(.+)")
 _CONVENTIONAL = re.compile(r"(\w+)(?:\(([^)]*)\))?!?:\s*(.+)")  # title_line, stored without "TITLE:"
+_BLOCKED = re.compile(r"^BLOCKED:[ \t]*(.*)$", re.M)  # the worker gives up (ADR 0003)
 _VERDICT = re.compile(r"VERDICT:\s*(APPROVE|FIXUP)\b(.*)", re.S)
 
 
@@ -58,6 +59,12 @@ def _prompt(name: str, **values) -> str:
 def _clip(text: str, limit: int = 1500) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit].rstrip() + "\n…"
+
+
+def _added(before: str, after: str) -> str:
+    """The lines an append-only writer added to a note."""
+    old = set(before.splitlines())
+    return "\n".join(line for line in after.splitlines() if line not in old).strip()
 
 
 def _title_parts(t: tasks.Task) -> tuple[str, str, str]:
@@ -118,7 +125,44 @@ class Flow:
             log.exception("could not send to Telegram: %s", message[:200])
 
     def _project_dir(self, t: tasks.Task) -> Path:
-        return projects.directory(self.s, t.project)
+        pdir = projects.directory(self.s, t.project)
+        redact.add_files(pdir, self.s.deny_read)  # an agent that prints a secret won't log it
+        return pdir
+
+    async def _check_git(self, t: tasks.Task, wt: Path) -> None:
+        """Refuse to go on if anything in .git that makes git run code changed since the
+        worktree was made: a hook, the config, attributes (PRD SR3); or anything inside a folder
+        linked to the main checkout, where an edit escapes the diff (SR4)."""
+        baseline = t.meta.get("git_guard")
+        if not baseline:
+            log.warning("no .git fingerprint for this task (made before devflow checked); not compared")
+            return
+        changed = await asyncio.to_thread(gitsafe.changes, baseline, wt)
+        if changed:
+            log.error(".git changed during the task: %s", ", ".join(changed))
+            raise RuntimeError(
+                f"⚠️ .git was changed while the task ran: {', '.join(changed)}. Something may have "
+                f"planted code that git runs. devflow ran none of it. Inspect and restore these in the "
+                f"main checkout before /retry; the task can't be approved until they match again.")
+        links = t.meta.get("link_guard") or {}
+        now = await asyncio.to_thread(worktree.snapshot, wt, list(links))
+        written = sorted(rel for rel in links if now.get(rel) != links[rel])
+        if written:
+            log.error("files changed inside linked folders: %s", ", ".join(written))
+            raise RuntimeError(
+                f"⚠️ files changed inside {', '.join(f'`{r}`' for r in written)}, which is linked to your "
+                f"main checkout: those edits are not in the diff and were not reviewed. Inspect them in "
+                f"the main checkout (e.g. reinstall dependencies) before /retry.")
+
+    def _notes(self, name: str, project: str) -> Path:
+        """The notes Claude may read for this run: a copy of the project's notes, not the vault."""
+        return tasks.copy_view(self.s.vault, RUNTIME_DIR / "notes" / name, project)
+
+    def _unsafe(self) -> str:
+        """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""
+        if not self.s.unsafe_shell:
+            return ""
+        return "\n\n⚠️ UNSAFE_SHELL is on: the worker could run any shell command except git."
 
     async def _sync(self, pdir: Path) -> tuple[str, sync.Fetch]:
         """Fetch, then name the shared branch to build on (origin/development)."""
@@ -154,6 +198,10 @@ class Flow:
             if t.meta.get("review_verdict") != "approve":
                 raise FlowError(f"{task_id} has no approving review yet")
             pdir, wt = self._project_dir(t), Path(t.meta["worktree"])
+            try:
+                await self._check_git(t, wt)
+            except RuntimeError as e:
+                raise FlowError(f"{task_id}: {e}") from None
             ref, fetched = await self._sync(pdir)
             clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)
             if not clean:
@@ -250,10 +298,13 @@ class Flow:
         try:
             async with self.ask_slots:
                 log.info("question%s: %s", " (follow-up)" if target.session else "", question[:300])
+                scope = "*" if target.cwd == self.s.projects else target.label
+                notes = await asyncio.to_thread(self._notes, f"ask-{'all' if scope == '*' else scope}", scope)
                 prompt = question if target.session else _prompt(
-                    "ask", scope=target.scope, vault=self.s.vault, question=question)
+                    "ask", scope=target.scope, vault=notes, question=question)
                 res = await claude.run(self.s, prompt, target.cwd, claude.ASKER_TOOLS, resume=target.session,
-                                       add_dirs=(self.s.vault,), timeout=ASK_TIMEOUT)
+                                       add_dirs=(notes,), timeout=ASK_TIMEOUT,
+                                       bind=claude.Bind("asker", scope=scope))
             if not res.ok:
                 raise RuntimeError(f"couldn't answer: {_clip(res.text, 500)}")
             log.info("answered (%d chars, $%.2f)", len(res.text), res.cost_usd)
@@ -284,12 +335,15 @@ class Flow:
                 f"SPEC\n{_clip(n.section('Spec') or '', 1800)}\n\nLAST REVIEW\n{_clip(n.section('Review') or '', 800)}\n\n"
                 f"HISTORY\n{history}")
 
-    def diff(self, task_id: str) -> str:
+    def diff(self, task_id: str, stat: bool = False) -> str:
         t = self.store.get(task_id)
         base, branch = t.meta.get("base"), t.meta.get("branch")
         if not (base and branch):
             raise FlowError(f"{task_id} has no branch yet")
-        return worktree.git(self._project_dir(t), "diff", f"{base}...{branch}")
+        return worktree.git(self._project_dir(t), "diff", *(["--stat"] if stat else []), f"{base}...{branch}")
+
+    def diff_stat(self, task_id: str) -> str:
+        return self.diff(task_id, stat=True)
 
     # -- phases --------------------------------------------------------------
 
@@ -299,16 +353,18 @@ class Flow:
         ref, fetched = await self._sync(pdir)
         found = await asyncio.to_thread(sync.overlaps, self.s, pdir, ref)
         self.store.update(task_id, base_ref=ref)
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
         prompt = _prompt(
-            "plan", task_id=task_id, project=t.project, project_dir=pdir, vault=self.s.vault,
+            "plan", task_id=task_id, project=t.project, project_dir=pdir, vault=notes,
             request=t.note.section("Request") or "",
             feedback=f"\n## Your previous plan was rejected\n\n{feedback}\n" if feedback else "",
             base_ref=ref, sync_note=fetched.note(), overlap_days=self.s.overlap_days,
             overlaps=sync.describe(found) or "(none)",
         )
         await self.n.text(f"🧠 {task_id} planning…")
-        res = await claude.run(self.s, prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(self.s.vault,),
-                               resume=t.meta.get("claude_session", "") if feedback else "")
+        res = await claude.run(self.s, prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
+                               resume=t.meta.get("claude_session", "") if feedback else "",
+                               bind=claude.Bind("planner", task_id))
         if not res.ok:
             raise RuntimeError(f"planner failed: {_clip(res.text, 500)}")
         t = self.store.get(task_id)
@@ -332,7 +388,7 @@ class Flow:
         stale = "" if fetched.ok else f"\n\n{fetched.note()}"
         await self.n.text(
             f"📋 {task_id} planned — {t.meta.get('title_line') or t.meta.get('title')}\n\n"
-            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}\n\n"
+            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}{self._unsafe()}\n\n"
             f"/approve {task_id} · /reject {task_id} <why> · /show {task_id}"
         )
 
@@ -350,6 +406,8 @@ class Flow:
         branch = worktree.branch_name(kind, t.id, summary, self.s.branch_prefix,
                                       taken=lambda name: sync.branch_taken(self.s, pdir, name))
         wt = await asyncio.to_thread(worktree.create, self.s, pdir, t.id, branch, base)
+        guard = await asyncio.to_thread(gitsafe.fingerprint, wt)
+        links = await asyncio.to_thread(lambda: worktree.snapshot(wt, worktree.linked_dirs(self.s, wt)))
         host, note = "", ""
         vh = projects.find_vhost(self.s, pdir)
         if vh:
@@ -361,7 +419,8 @@ class Flow:
         else:
             note = "\n⚠️ no devcrate vhost serves this project; HTTP checks will be skipped"
         self.store.transition(t.id, "coding", "bot", f"plan approved; base {ref} {base[:8]}", branch=branch,
-                              base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="")
+                              base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="",
+                              git_guard=guard, link_guard=links)
         log.info("worktree %s on %s from %s @ %s, vhost %s", wt, branch, ref, base[:8], host or "-")
         self._spawn(t.id, self._work(t.id))
         return (f"🔨 {t.id} approved — worker started on `{branch}` from {ref} @ {base[:8]} ({fetched.note()})"
@@ -389,12 +448,15 @@ class Flow:
         log.info("worker replied (%d chars)", len(reply))
 
         t = self.store.get(task_id)
-        if t.state == "blocked":
-            await self.n.text(f"❓ {task_id} worker gave up: {_clip((t.note.section('History') or '-').splitlines()[-1], 600)}\n"
-                              f"/show {task_id} · /retry {task_id} · /stop {task_id}")
-            return
         if reply:
             self.store.append(task_id, "Worker log", f"#### {tasks.now()} worker reply\n\n{_clip(reply, 3000)}")
+        gave_up = _BLOCKED.search(reply or "")
+        if gave_up:
+            why = gave_up.group(1).strip() or "no reason given"
+            self.store.transition(task_id, "blocked", "bot", f"worker gave up: {why}")
+            await self.n.text(f"❓ {task_id} worker gave up: {_clip(why, 600)}\n"
+                              f"/show {task_id} · /retry {task_id} · /stop {task_id}")
+            return
 
         if conflicts:
             left = await asyncio.to_thread(sync.markers_left, wt, conflicts)
@@ -406,6 +468,7 @@ class Flow:
         message = commit_message or (
             (f"{head}: {summary}" if not fixup else f"{head}: address review of {task_id}") +
             f"\n\n- devflow task {task_id}")
+        await self._check_git(t, wt)
         sha = await asyncio.to_thread(worktree.commit, self.s, wt, message)
         log.info("commit %s", sha[:10] if sha else "(nothing changed)")
         if sha is None and not fixup:
@@ -419,7 +482,8 @@ class Flow:
         vh = projects.find_vhost(self.s, pdir)
         php = projects.php_exe(self.s, vh.port) if vh else None
         ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, php,
-                              vh.host if vh else None, t.meta.get("vhost") or None)
+                              vh.host if vh else None, t.meta.get("vhost") or None,
+                              unsafe_before=self.s.before_unsafe_methods, env_allow=self.s.check_env_allow)
 
         ref, fetched = await self._sync(pdir)
         clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)
@@ -483,7 +547,9 @@ class Flow:
                          base=t.meta["base"], round=rnd, max_rounds=self.s.max_bounces + 1, evidence=evidence)
         await self.n.text(f"🔍 {task_id} reviewing (round {rnd})…")
         before = self.store.get(task_id).note.section("Review") or ""
-        res = await claude.run(self.s, prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(self.s.vault,))
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
+        res = await claude.run(self.s, prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
+                               bind=claude.Bind("reviewer", task_id))
         if not res.ok:
             raise RuntimeError(f"reviewer failed: {_clip(res.text, 500)}")
         m = _VERDICT.search(res.text)
@@ -498,7 +564,7 @@ class Flow:
             stat = await asyncio.to_thread(worktree.diff, wt, t.meta["base"], True)
             caption = (f"✅ {task_id} reviewed and ready — {t.meta.get('title_line') or t.meta.get('title')}\n"
                        f"branch `{t.meta['branch']}`" + (f" · https://{t.meta['vhost']}" if t.meta.get("vhost") else "") +
-                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}\n\n"
+                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}{self._unsafe()}\n\n"
                        f"/approve {task_id} · /reject {task_id} <why> · /diff {task_id}")
             await self.n.text(caption)
             if shot:
@@ -558,13 +624,22 @@ class Flow:
                               f" — merged cleanly in simulation at approval; not merged, not pushed.\n\n"
                               f"```\n{commits}\n```")
             self.store.update(task_id, result_written=True)
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
+        note_path = self.s.vault / tasks.PROJECTS_DIR / f"{t.project}.md"
+        before = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
         res = await claude.run(self.s, _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
-                               pdir, claude.CLOSER_TOOLS, add_dirs=(self.s.vault,), timeout=600)
+                               pdir, claude.CLOSER_TOOLS, add_dirs=(notes,), timeout=600,
+                               bind=claude.Bind("closer", task_id))
         if not res.ok:
             log.error("closer failed: %s", _clip(res.text, 500))
         self.store.update(task_id, closed=not leftovers)
         recorded = _clip(res.text, 400) if res.ok else "(closer failed; nothing recorded)"
-        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n{recorded}{leftovers}")
+        after = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
+        added = _added(before, after)
+        written = (f"\n\n📝 Added to the {t.project} project note (every later run reads it):\n{_clip(added, 1200)}"
+                   if added else "")
+        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n"
+                          f"{recorded}{written}{leftovers}")
 
     async def close(self) -> None:
         for job in list(self.jobs.values()):

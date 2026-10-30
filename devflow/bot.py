@@ -1,7 +1,8 @@
 """The Telegram front end. Thin: parse a command, call `Flow`, send the answer.
 
-Only ALLOWED_CHAT_ID is served; every other chat is ignored without a reply,
-so the bot gives a stranger nothing to probe.
+Only ALLOWED_CHAT_ID is served, and in a group only ALLOWED_USER_IDS; every
+other chat and sender is ignored without a reply, so the bot gives a stranger
+nothing to probe.
 """
 
 from __future__ import annotations
@@ -19,8 +20,8 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from . import fmt, logs
-from .config import Settings
+from . import fmt, logs, redact
+from .config import RUNTIME_DIR, Settings
 from .pipeline import Asked, Flow, FlowError
 from .tasks import ID_RE
 from .vault import VaultError
@@ -108,14 +109,14 @@ class TelegramNotifier:
         self.app, self.chat_id = app, chat_id
 
     async def text(self, message: str) -> None:
-        for chunk in fmt.split(message):
+        for chunk in fmt.split(redact.redact(message)):
             send = lambda text, mode: self.app.bot.send_message(self.chat_id, text, parse_mode=mode)  # noqa: E731
             await _retry(f"message {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
 
     async def photo(self, path: Path, caption: str) -> None:
         async def send():
             with open(path, "rb") as f:
-                await self.app.bot.send_photo(self.chat_id, f, caption=caption[:1000])
+                await self.app.bot.send_photo(self.chat_id, f, caption=redact.redact(caption)[:1000])
         await _retry(f"photo {path.name}", send)
 
 
@@ -155,7 +156,7 @@ async def _reply(update: Update, text: str) -> list:
     """Reply with Markdown-ish text (see fmt), split as needed. Returns the sent messages."""
     send = lambda t, mode: _message(update).reply_text(t, parse_mode=mode)  # noqa: E731
     sent = [await _retry(f"reply {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
-            for chunk in fmt.split(text)]
+            for chunk in fmt.split(redact.redact(text))]
     return [m for m in sent if m is not None]
 
 
@@ -227,10 +228,19 @@ async def cmd_diff(update: Update, ctx):
     args = _args(update, 1)
     if not args:
         raise FlowError("usage: /diff <id>")
-    patch = _flow(ctx).diff(args[0])
+    flow = _flow(ctx)
+    patch = flow.diff(args[0])
     if not patch:
         raise FlowError("empty diff")
-    await _message(update).reply_document(io.BytesIO(patch.encode("utf-8")), filename=f"{args[0]}.diff")
+    if not flow.s.share_code_via_telegram:
+        saved = RUNTIME_DIR / "diffs" / f"{args[0]}.diff"
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_text(patch, encoding="utf-8")
+        await _reply(update, f"{flow.diff_stat(args[0])}\n\nCode isn't sent to Telegram "
+                             f"(SHARE_CODE_VIA_TELEGRAM=false). The diff is in `{saved}`.")
+        return
+    await _message(update).reply_document(io.BytesIO(redact.redact(patch).encode("utf-8")),
+                                          filename=f"{args[0]}.diff")
 
 
 @_handler
@@ -355,8 +365,12 @@ async def _ignored(update: Update, ctx):
 
 
 def build(settings: Settings) -> Application:
+    redact.add(settings.telegram_token)
     if not settings.telegram_token or not settings.allowed_chat_id:
         raise SystemExit("set TELEGRAM_TOKEN and ALLOWED_CHAT_ID in devflow/.env")
+    if settings.allowed_chat_id < 0 and not settings.allowed_user_ids:
+        # In a group every member could /approve, /diff and /ask; name who may.
+        raise SystemExit("ALLOWED_CHAT_ID is a group: set ALLOWED_USER_IDS to the members who may use the bot")
 
     async def on_start(app: Application) -> None:
         logs.watch_loop(asyncio.get_running_loop())
@@ -381,7 +395,9 @@ def build(settings: Settings) -> Application:
            .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(10)
            .get_updates_connect_timeout(20).get_updates_read_timeout(40)
            .post_init(on_start).post_shutdown(on_stop).build())
-    me = filters.Chat(chat_id=settings.allowed_chat_id)
+    me: filters.BaseFilter = filters.Chat(chat_id=settings.allowed_chat_id)
+    if settings.allowed_user_ids:
+        me = me & filters.User(user_id=settings.allowed_user_ids)
     for name, fn in [("start", cmd_help), ("help", cmd_help), ("task", cmd_task), ("status", cmd_status),
                      ("show", cmd_show), ("approve", cmd_approve), ("reject", cmd_reject), ("answer", cmd_reject),
                      ("diff", cmd_diff), ("retry", cmd_retry), ("refresh", cmd_refresh), ("stop", cmd_stop),

@@ -13,18 +13,19 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
 
+from . import platform
 from .config import RUNTIME_DIR, Settings
 
 log = logging.getLogger("devflow.opencode")
 
-GIT_DENY = ["git push*", "git commit*", "git checkout*", "git switch*", "git reset*",
-            "git rebase*", "git merge*", "git branch*", "git worktree*", "git stash*"]
+# Tools that reach the network or start a subagent. A subagent (`task`) runs in a session of
+# its own, without this session's ruleset, so it would escape every rule below.
+NO_TOOLS = ["webfetch", "websearch", "codesearch", "task"]
 
 
 class OpencodeError(RuntimeError):
@@ -32,18 +33,12 @@ class OpencodeError(RuntimeError):
 
 
 def config_file(settings: Settings) -> Path:
-    """Extra opencode config (OPENCODE_CONFIG) registering devflow-mcp."""
+    """Extra opencode config (OPENCODE_CONFIG). It registers no devflow-mcp: `opencode serve`
+    shares one MCP config across all sessions, so it couldn't be bound to one task (ADR 0003).
+    The worker reports back in its reply instead."""
     RUNTIME_DIR.mkdir(exist_ok=True)
     path = RUNTIME_DIR / "opencode.json"
-    cfg = {
-        "$schema": "https://opencode.ai/config.json",
-        "mcp": {"devflow": {
-            "type": "local",
-            "command": [sys.executable, "-m", "devflow.mcp_server"],
-            "environment": {"DEVFLOW_VAULT": str(settings.vault)},
-            "enabled": True,
-        }},
-    }
+    cfg: dict[str, object] = {"$schema": "https://opencode.ai/config.json"}
     path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return path
 
@@ -60,9 +55,16 @@ def path_pattern(glob: str) -> str:
     return p
 
 
-def ruleset(settings: Settings) -> list[dict]:
+def ruleset(settings: Settings) -> list[dict[str, str]]:
+    """The worker's permissions. opencode applies the LAST matching rule, so the order matters:
+    every shell command is denied, then the project's allow-list opens specific commands, then
+    git is denied again so no allow-list entry (not even `*`) can reopen it. devflow does all git."""
     rules = [{"permission": "read", "pattern": path_pattern(p), "action": "deny"} for p in settings.deny_read]
-    rules += [{"permission": "bash", "pattern": p, "action": "deny"} for p in GIT_DENY]
+    rules.append({"permission": "bash", "pattern": "*", "action": "deny"})
+    allow = ["*"] if settings.unsafe_shell else settings.worker_shell_allow
+    rules += [{"permission": "bash", "pattern": p, "action": "allow"} for p in allow]
+    rules += [{"permission": "bash", "pattern": p, "action": "deny"} for p in ("git", "git *", "*/git *", "*git.exe *")]
+    rules += [{"permission": p, "pattern": "*", "action": "deny"} for p in NO_TOOLS]
     rules += [
         {"permission": "external_directory", "pattern": "*", "action": "deny"},
         {"permission": "question", "pattern": "*", "action": "deny"},
@@ -95,7 +97,7 @@ class Client:
         out = open(RUNTIME_DIR / "opencode-serve.log", "ab")
         log.info("starting opencode serve on port %s (output in %s)", port, RUNTIME_DIR / "opencode-serve.log")
         self._server = subprocess.Popen([exe, "serve", "--port", port], env=env, stdout=out, stderr=out,
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                        **platform.group_kwargs())  # type: ignore[call-overload]
         for _ in range(60):
             if await self.alive():
                 return
@@ -182,4 +184,4 @@ class Client:
         await self.http.aclose()
         if self._server and self._server.poll() is None:
             # opencode.CMD wraps node: kill the whole tree, not just cmd.exe.
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(self._server.pid)], capture_output=True)
+            platform.kill_tree(self._server)

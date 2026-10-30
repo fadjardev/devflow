@@ -47,8 +47,13 @@ module = [
     "devflow.claude",
     "devflow.config",
     "devflow.fmt",
+    "devflow.gitsafe",
     "devflow.logs",
+    "devflow.mcp_server",
+    "devflow.platform",
     "devflow.projects",
+    "devflow.redact",
+    "devflow.security",
     "devflow.sync",
     "devflow.tasks",
     "devflow.vault",
@@ -67,3 +72,7 @@ warn_return_any = true
 no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures imported from another test module are used as parameters of the same name.
+"tests/*" = ["F811"]

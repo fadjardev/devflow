@@ -2,8 +2,9 @@ You are reviewing devflow task $task_id in project `$project`. You wrote the spe
 a cheaper model implemented it in this worktree on branch `$branch`. This is
 review round $round of at most $max_rounds.
 
-Read the spec with `task_read` (task_id `$task_id`), then the change:
-`git diff $base...HEAD` (and `git log $base..HEAD`). Read the surrounding code
+Read the spec with `task_read` (task_id `$task_id`), then the change with the
+devflow `git` tool: `git(args=["diff", "$base...HEAD"])` and
+`git(args=["log", "$base..HEAD"])`. You have no shell. Read the surrounding code
 where the diff alone doesn't tell you whether it is right.
 
 The bot's verification evidence:

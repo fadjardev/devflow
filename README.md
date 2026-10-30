@@ -32,8 +32,9 @@ nothing.
   review. A strong model does the judgment, a cheaper one does the typing, and
   the strong model still reads every diff.
 - **Control.** Agents work unattended, but nothing they do counts until you
-  approve it. devflow itself never merges, never pushes, and never touches your
-  base branch. The agents are restricted, not sandboxed (see
+  approve it. devflow never merges, never pushes, and never touches your base
+  branch. The agents can't either: no git, a deny-by-default shell, writes only
+  through narrow, task-bound tools. They are restricted, not sandboxed (see
   [Safety model](#safety-model)).
 - **Evidence over claims.** devflow verifies the change itself rather than
   trusting the agent's report.
@@ -115,59 +116,60 @@ Messages from any other chat are ignored without a reply.
 ## Safety model
 
 > **Read this before pointing devflow at code you don't fully trust.** The
-> agents run as your own user account, with no OS-level sandbox. The rules below
-> stop an agent that is behaving normally. An agent that has been steered by
-> malicious text it read (prompt injection from a file, commit message, branch
-> or web page) can get around several of them. Run devflow only on
-> repositories you trust, on a machine or user account whose credentials
-> you're willing to expose to the worker.
+> agents run as your own user account, with no OS-level sandbox. devflow
+> assumes an agent can be steered by malicious text it reads (a file, a commit
+> message, a branch name, a web page), so it relies on what agents **cannot**
+> do rather than on what they are told. Some gaps remain; they are listed below
+> and in [docs/security.md](docs/security.md).
 
-Prompts alone are not a security boundary, so devflow configures each tool's
-permission system as tightly as it can. Here is what that does and doesn't
-cover today.
+Every rule here is enforced by code or by the agent tool's own permission
+system, and has a test that attempts to break it (`tests/test_security.py`).
 
-- **Claude** runs headless with `--permission-mode dontAsk` and a per-role
-  allow-list: read, search, read-only git subcommands, and the devflow-mcp tools
-  that role needs. Write, Edit, `git push/commit/checkout`, and the Read tool on
-  secret files (`DENY_READ`) are denied.
-  *Not yet covered:* the git rules match by prefix, so some arguments of
-  `git diff`/`git log` (`--no-index`, `--output`) may still read or write files
-  outside these rules.
-- **opencode** runs with a per-session ruleset. Its file tools can't read
-  `DENY_READ` files or reach outside the worktree, and a list of history- and
-  branch-changing `git` commands is denied. A watchdog rejects any permission
-  prompt that would otherwise hang with nobody at the terminal, and tells you on
-  Telegram. Each worker run is capped at 45 minutes.
-  *Not yet covered:* the worker's **shell is otherwise unrestricted**. Shell
-  commands can read secret files, reach the network, write outside the
-  worktree (including the main checkout's `.git` hooks and config), and get
-  around the git denylist. If a non-interactive git credential is configured,
-  that includes pushing. Folders linked into the worktree (`LINK_PATHS`) point at
-  your main checkout, so writes inside them land there and don't appear in the
-  diff.
-- **devflow-mcp** exposes five narrow tools (read a task, change its state along
-  the allowed transitions, append to a section, add a decision, update a project
-  note). File names come from validated ids and existing project names, never
-  from free text, and every path must stay inside the task, request, or project
-  folders of the vault. Agents can't take a human gate.
-  *Not yet covered:* the tools aren't scoped to the agent's own task or role, so
-  any agent, the worker included, can write to other tasks and to project
-  notes. That includes a task's spec after you approved it at gate 1.
-- **Git**: devflow's own git operations commit only on its `devflow/...`
-  branches. devflow never merges, pushes, or force-pushes, and never changes
-  your base branch or your main checkout's working tree. (This covers what
-  devflow does, not what a misbehaving worker's shell could do; see above.)
-- **Telegram**: only the allowed chat is answered. If that chat is a group,
-  every member can issue every command. Specs, diffs, `/ask` answers and
-  `/log` excerpts go through Telegram's servers.
+- **Claude** runs headless with `--permission-mode dontAsk`: it can read and
+  search files, and use the devflow-mcp tools its role needs. It has no shell,
+  no Write/Edit and no web access, and can't read `DENY_READ` files. It reads
+  git history through devflow-mcp's `git` tool, which allows only read-only
+  subcommands and safe options, and only paths inside the repository. It reads
+  a copy of the project's notes, not your whole vault.
+- **opencode** (the worker) runs with a per-session ruleset. Its shell runs
+  only the commands in `WORKER_SHELL_ALLOW` (default: `php -l *`); everything
+  else is refused, and `git` always is. Its file tools can't read `DENY_READ`
+  files or reach outside the worktree. It has no web access and can't start
+  subagents. A watchdog rejects any permission prompt that would hang with
+  nobody at the terminal and tells you on Telegram. Each run is capped at 45
+  minutes.
+- **devflow-mcp** is the agents' only way to write notes. Each Claude run gets
+  its own instance, bound to one task and one role: the planner writes the
+  spec (and can't change it after you approve it at gate 1), the reviewer its
+  review, the closer the result and append-only, size-capped project notes,
+  which the close message shows you. The worker gets no devflow-mcp at all.
+  Agents can't take a human gate.
+- **Git**: devflow runs git without hooks or fsmonitor, so nothing planted in
+  `.git` runs. If a hook, the git config or a folder linked into the worktree
+  (`LINK_PATHS`) changes during a task, the task stops and can't be approved
+  until you have looked. devflow commits only on its `devflow/...` branches,
+  never merges, pushes or force-pushes, and never changes your base branch or
+  your main checkout's working tree.
+- **Verification** runs lint and test commands with a minimal environment (no
+  tokens), and HTTP checks only against the task's own site: POST/PUT/DELETE
+  checks don't touch your checkout's data.
+- **Telegram**: only the allowed chat is answered, and in a group only
+  `ALLOWED_USER_IDS`. Known secret formats and the values in your projects'
+  `DENY_READ` files are masked in logs and messages.
 
-Also not protected: a secret that was ever committed is still visible through
-read-only `git log -p`. Code and data the agents read go to whichever model
-providers you configure. Tests and checks run the worker's code as your user.
+**Not protected** (details in [docs/security.md](docs/security.md)):
 
-Closing these gaps (deny-by-default worker shell, git hook protection, scoped
-MCP tools, user-level allow-list, log redaction, and an optional worker
-sandbox) is planned work.
+- A command you allow the worker that runs code (a test runner, `composer`,
+  `npm`, an interpreter) can do anything your user can. So can the tests
+  devflow runs during verification. An optional OS-level sandbox for the worker
+  is planned.
+- A planted hook is caught and never run by devflow, but stays in your main
+  checkout's `.git` until you remove it. Read the stop message before you run
+  git there.
+- Secrets that were ever committed are visible in git history.
+- Code and notes go to your model providers, and specs, diffs and answers go
+  through Telegram, which is not end-to-end encrypted
+  (`SHARE_CODE_VIA_TELEGRAM=false` keeps diffs local).
 
 ## Verification
 
@@ -276,6 +278,7 @@ All settings live in `.env`; [`.env.example`](.env.example) documents each one.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `TELEGRAM_TOKEN`, `ALLOWED_CHAT_ID` | — | The bot, and the only chat it answers |
+| `ALLOWED_USER_IDS` | — | Who may command the bot; required when the chat is a group |
 | `VAULT_PATH` | — | The notes vault |
 | `PROJECTS_PATH` | — | Where project checkouts live; worktrees go in `.worktrees\` under it |
 | `DEVCRATE_ROOT` | — | Root of the local nginx/PHP stack (`nginx\`, `php\php-X.Y\`) |
@@ -289,6 +292,11 @@ All settings live in `.env`; [`.env.example`](.env.example) documents each one.
 | `OVERLAP_DAYS` | `14` | How far back other unmerged branches count as active |
 | `LINK_PATHS` | see example | Gitignored files and folders a worktree needs to run |
 | `DENY_READ` | see example | Files no agent may read (globs relative to the project) |
+| `WORKER_SHELL_ALLOW` | `php -l *` | Shell commands the worker may run (opencode patterns); everything else is refused |
+| `UNSAFE_SHELL` | `false` | Let the worker run any command except git (not recommended) |
+| `CHECK_ENV_ALLOW` | — | Extra environment variables lint and test commands may see |
+| `BEFORE_UNSAFE_METHODS` | `false` | Also run POST/PUT/DELETE checks against your own checkout |
+| `SHARE_CODE_VIA_TELEGRAM` | `true` | `false`: `/diff` sends a summary and a local path instead of code |
 
 ## Logs
 

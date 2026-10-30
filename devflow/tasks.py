@@ -51,6 +51,8 @@ for _s in ("new", "planned", "coding", "review"):
 SECTIONS = ("Request", "Spec", "Worker log", "Review", "Verification", "Result", "History")
 # Sections an agent may append to through devflow-mcp. Request and History are the bot's.
 AGENT_SECTIONS = ("Spec", "Worker log", "Review", "Verification", "Result")
+# States in which an agent may still write the Spec: before gate 1.
+SPEC_OPEN = ("new", "planned")
 
 ID_RE = re.compile(r"^\d{6}-\d{2}$")
 PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
@@ -222,6 +224,9 @@ class TaskStore:
             note = vault.read(path)
             if note.meta["state"] in FINAL and actor == _AGENT:
                 raise VaultError(f"{task_id} is {note.meta['state']}; it no longer takes agent writes")
+            if match == "Spec" and actor == _AGENT and note.meta["state"] not in SPEC_OPEN:
+                # The human approved this text at gate 1; the worker implements whatever it says.
+                raise VaultError(f"{task_id}: the Spec was approved at gate 1 and can't change now")
             note.set_section(match, text, append=not replace)
             note.meta["updated"] = now()
             vault.write(path, note)
@@ -281,3 +286,23 @@ def create_request(vault_root: Path, project: str, text: str, today: dt.date | N
     with vault.locked(path):
         vault.write(path, Note({}, text.strip() + "\n\n_(logged via devflow Telegram)_\n"))
     return title
+
+
+def copy_view(vault_root: Path, dest: Path, project: str) -> Path:
+    """A copy of the notes Claude may read for `project` (or `*`, every project): the project
+    notes and their task notes, in the vault's layout. Claude gets this folder instead of the
+    whole vault, which may hold anything (PRD SR13). Refreshed on every run."""
+    wanted = [f"{PROJECTS_DIR}/*.md", f"{TASKS_DIR}/*/*.md"] if project == "*" else \
+        [f"{PROJECTS_DIR}/{check_project(vault_root, project)}.md", f"{TASKS_DIR}/{project}/*.md"]
+    keep = set()
+    for pattern in wanted:
+        for src in vault_root.glob(pattern):
+            rel = src.relative_to(vault_root)
+            keep.add(rel)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(src.read_bytes())
+    for old in [p for p in dest.rglob("*.md") if p.relative_to(dest) not in keep]:
+        old.unlink()
+    dest.mkdir(parents=True, exist_ok=True)
+    return dest

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
-import stat
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from . import gitsafe, platform
 from .config import Settings
 
 
@@ -17,15 +18,10 @@ class GitError(RuntimeError):
     pass
 
 
-# Unattended: a credential or editor prompt must fail fast, never wait for a human.
-_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
-        "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"}
-
-
 def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
+    """git without hooks, fsmonitor or external diff drivers (see gitsafe), never prompting."""
     try:
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", env=_ENV, stdin=subprocess.DEVNULL, timeout=timeout)
+        return gitsafe.run(cwd, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise GitError(f"git {' '.join(args)}: timed out after {int(timeout)}s") from None
 
@@ -77,11 +73,37 @@ def link_untracked(settings: Settings, project_dir: Path, wt: Path) -> list[str]
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
-            subprocess.run(["cmd", "/c", "mklink", "/J", str(dst), str(src)], capture_output=True, check=True)
+            platform.link_dir(src, dst)
         else:
             shutil.copy2(src, dst)
         done.append(rel)
     return done
+
+
+def linked_dirs(settings: Settings, wt: Path) -> list[str]:
+    """The LINK_PATHS that are links in this worktree (folders shared with the main checkout)."""
+    return [rel for rel in settings.link_paths if (wt / rel).exists() and platform.is_link(wt / rel)]
+
+
+def snapshot(wt: Path, rels: list[str]) -> dict[str, str]:
+    """A hash per linked folder over every file's path, size and modification time. A linked
+    folder is the main checkout's own folder, so a write there bypasses the diff and the
+    review (PRD SR4); comparing snapshots is how devflow notices."""
+    prints = {}
+    for rel in rels:
+        root = wt / rel
+        h = hashlib.sha256()
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for name in sorted(filenames):
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                h.update(f"{os.path.relpath(p, root)}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+        prints[rel] = h.hexdigest()[:16]
+    return prints
 
 
 def _must_exclude(wt: Path, rel: str) -> bool:
@@ -117,17 +139,6 @@ def diff(wt: Path, base: str, stat: bool = False) -> str:
     return git(wt, "diff", "--stat" if stat else "--patch", f"{base}...HEAD")
 
 
-def _is_link(path: str) -> bool:
-    """A symlink or a Windows junction. os.path.isjunction only exists from Python 3.12."""
-    if os.path.islink(path):
-        return True
-    isjunction = getattr(os.path, "isjunction", None)
-    if isjunction is not None:
-        return bool(isjunction(path))
-    attrs = getattr(os.lstat(path), "st_file_attributes", 0)
-    return bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
-
-
 def remove(project_dir: Path, wt: Path) -> None:
     """Remove the worktree but keep its branch. Junctions go first, so nothing follows them."""
     if not wt.exists():
@@ -136,7 +147,7 @@ def remove(project_dir: Path, wt: Path) -> None:
     for dirpath, dirnames, _ in os.walk(wt):
         for d in list(dirnames):
             p = os.path.join(dirpath, d)
-            if _is_link(p):
+            if platform.is_link(p):
                 os.rmdir(p)  # removes the link only, never the target
                 dirnames.remove(d)
     git(project_dir, "worktree", "remove", "--force", str(wt))

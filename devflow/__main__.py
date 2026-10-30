@@ -6,10 +6,10 @@ import shutil
 import subprocess
 import sys
 
-from . import config, projects
+from . import config, projects, security
 
 
-def doctor(settings: config.Settings) -> int:
+def doctor(settings: config.Settings, fix: bool = False) -> int:
     ok = True
 
     def line(good: bool, what: str, detail: str = "") -> None:
@@ -19,9 +19,18 @@ def doctor(settings: config.Settings) -> int:
 
     print("devflow doctor")
     line(bool(settings.telegram_token), "TELEGRAM_TOKEN set")
+    for what, path in ((".env", config.REPO_ROOT / ".env"), ("runtime folder", config.RUNTIME_DIR)):
+        loose = security.loose_permissions(path)
+        if loose and fix:
+            security.restrict(path)
+            loose = security.loose_permissions(path)
+        line(not loose, f"{what} private", f"{path}: {loose}; run: python -m devflow doctor --fix" if loose else "")
     line(bool(settings.allowed_chat_id), "ALLOWED_CHAT_ID set")
     line((settings.vault / "01-Projects").is_dir(), "vault", str(settings.vault))
     line(settings.projects.is_dir(), "projects", str(settings.projects))
+    line(not settings.unsafe_shell, "worker shell restricted",
+         "UNSAFE_SHELL is on: the worker can run any command except git" if settings.unsafe_shell
+         else f"allowed: {', '.join(settings.worker_shell_allow) or 'nothing'}")
     for exe in ("claude", "opencode", "git"):
         line(bool(shutil.which(exe)), f"{exe} on PATH", shutil.which(exe) or "")
     nginx = settings.nginx_prefix / "current" / "nginx.exe"
@@ -57,7 +66,7 @@ def doctor(settings: config.Settings) -> int:
 def main() -> None:
     settings = config.load()
     if sys.argv[1:2] == ["doctor"]:
-        raise SystemExit(doctor(settings))
+        raise SystemExit(doctor(settings, fix="--fix" in sys.argv[2:]))
     from .bot import main as run_bot
     run_bot(settings)
 
