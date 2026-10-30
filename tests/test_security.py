@@ -142,9 +142,7 @@ class VendorWriter(FakeOpencode):
         return reply
 
 
-@pending("S3")
-def test_a_write_into_a_linked_folder_is_caught_at_gate_2(setup):
-    flow, repo = setup[0], setup[1]
+def _vendor_project(flow, repo):
     (repo / ".gitignore").write_text("/vendor/\n")
     g(repo, "add", ".gitignore")
     g(repo, "commit", "-q", "-m", "ignore vendor")
@@ -152,12 +150,28 @@ def test_a_write_into_a_linked_folder_is_caught_at_gate_2(setup):
     (repo / "vendor").mkdir()
     (repo / "vendor" / "lib.php").write_text("<?php\n")
     flow.s = dataclasses.replace(flow.s, link_paths=["vendor"])
+
+
+def test_a_write_into_a_linked_folder_stops_the_task(setup):
+    flow, repo = setup[0], setup[1]
+    _vendor_project(flow, repo)
     flow.oc = VendorWriter()
+
+    t = asyncio.run(plan_and_code(flow))
+    assert (repo / "vendor" / "backdoor.php").exists()  # a junction/symlink: it did reach the checkout
+    assert t.state == "blocked"
+    assert "`vendor`" in (t.note.section("History") or "").splitlines()[-1]
+
+
+def test_gate_2_refuses_a_write_into_a_linked_folder_after_review(setup):
+    flow, repo = setup[0], setup[1]
+    _vendor_project(flow, repo)
     from devflow.pipeline import FlowError
 
     async def scenario():
         t = await plan_and_code(flow)
         assert t.state == "review"
+        (Path(t.meta["worktree"]) / "vendor" / "late.php").write_text("<?php // planted\n")
         with pytest.raises(FlowError, match="vendor"):
             await flow.approve(t.id)
 

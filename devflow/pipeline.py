@@ -131,7 +131,8 @@ class Flow:
 
     async def _check_git(self, t: tasks.Task, wt: Path) -> None:
         """Refuse to go on if anything in .git that makes git run code changed since the
-        worktree was made: a hook, the config, attributes (PRD SR3)."""
+        worktree was made: a hook, the config, attributes (PRD SR3); or anything inside a folder
+        linked to the main checkout, where an edit escapes the diff (SR4)."""
         baseline = t.meta.get("git_guard")
         if not baseline:
             log.warning("no .git fingerprint for this task (made before devflow checked); not compared")
@@ -143,6 +144,15 @@ class Flow:
                 f"⚠️ .git was changed while the task ran: {', '.join(changed)}. Something may have "
                 f"planted code that git runs. devflow ran none of it. Inspect and restore these in the "
                 f"main checkout before /retry; the task can't be approved until they match again.")
+        links = t.meta.get("link_guard") or {}
+        now = await asyncio.to_thread(worktree.snapshot, wt, list(links))
+        written = sorted(rel for rel in links if now.get(rel) != links[rel])
+        if written:
+            log.error("files changed inside linked folders: %s", ", ".join(written))
+            raise RuntimeError(
+                f"⚠️ files changed inside {', '.join(f'`{r}`' for r in written)}, which is linked to your "
+                f"main checkout: those edits are not in the diff and were not reviewed. Inspect them in "
+                f"the main checkout (e.g. reinstall dependencies) before /retry.")
 
     def _notes(self, name: str, project: str) -> Path:
         """The notes Claude may read for this run: a copy of the project's notes, not the vault."""
@@ -397,6 +407,7 @@ class Flow:
                                       taken=lambda name: sync.branch_taken(self.s, pdir, name))
         wt = await asyncio.to_thread(worktree.create, self.s, pdir, t.id, branch, base)
         guard = await asyncio.to_thread(gitsafe.fingerprint, wt)
+        links = await asyncio.to_thread(lambda: worktree.snapshot(wt, worktree.linked_dirs(self.s, wt)))
         host, note = "", ""
         vh = projects.find_vhost(self.s, pdir)
         if vh:
@@ -409,7 +420,7 @@ class Flow:
             note = "\n⚠️ no devcrate vhost serves this project; HTTP checks will be skipped"
         self.store.transition(t.id, "coding", "bot", f"plan approved; base {ref} {base[:8]}", branch=branch,
                               base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="",
-                              git_guard=guard)
+                              git_guard=guard, link_guard=links)
         log.info("worktree %s on %s from %s @ %s, vhost %s", wt, branch, ref, base[:8], host or "-")
         self._spawn(t.id, self._work(t.id))
         return (f"🔨 {t.id} approved — worker started on `{branch}` from {ref} @ {base[:8]} ({fetched.note()})"

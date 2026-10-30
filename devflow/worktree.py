@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import shutil
@@ -77,6 +78,32 @@ def link_untracked(settings: Settings, project_dir: Path, wt: Path) -> list[str]
             shutil.copy2(src, dst)
         done.append(rel)
     return done
+
+
+def linked_dirs(settings: Settings, wt: Path) -> list[str]:
+    """The LINK_PATHS that are links in this worktree (folders shared with the main checkout)."""
+    return [rel for rel in settings.link_paths if (wt / rel).exists() and platform.is_link(wt / rel)]
+
+
+def snapshot(wt: Path, rels: list[str]) -> dict[str, str]:
+    """A hash per linked folder over every file's path, size and modification time. A linked
+    folder is the main checkout's own folder, so a write there bypasses the diff and the
+    review (PRD SR4); comparing snapshots is how devflow notices."""
+    prints = {}
+    for rel in rels:
+        root = wt / rel
+        h = hashlib.sha256()
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames.sort()
+            for name in sorted(filenames):
+                p = os.path.join(dirpath, name)
+                try:
+                    st = os.lstat(p)
+                except OSError:
+                    continue
+                h.update(f"{os.path.relpath(p, root)}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+        prints[rel] = h.hexdigest()[:16]
+    return prints
 
 
 def _must_exclude(wt: Path, rel: str) -> bool:
