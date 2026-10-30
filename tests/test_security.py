@@ -275,7 +275,6 @@ def test_the_worker_gets_no_devflow_mcp(tmp_path, monkeypatch):
 
 # -- S6: HTTP checks -----------------------------------------------------------------------
 
-@pending("S6")
 @pytest.mark.parametrize("path", ["http://attacker.example/", "//attacker.example/x", "@attacker.example/",
                                   "https://127.0.0.1:22/", "relative/no-slash"])
 def test_checks_with_off_site_paths_are_rejected(path):
@@ -284,7 +283,6 @@ def test_checks_with_off_site_paths_are_rejected(path):
         verify.parse_checks(spec)
 
 
-@pending("S6")
 def test_non_get_checks_never_hit_the_before_vhost(monkeypatch):
     hits = []
 
@@ -299,7 +297,6 @@ def test_non_get_checks_never_hit_the_before_vhost(monkeypatch):
     assert ("after.test", "POST") in hits and ("before.test", "GET") in hits
 
 
-@pending("S6")
 def test_screenshot_url_stays_on_the_vhost():
     assert verify.page_url("app.test", "/@attacker.example/") == "https://app.test/@attacker.example/"
     with pytest.raises(verify.BadChecks):

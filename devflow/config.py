@@ -42,6 +42,7 @@ class Settings:
     # Shell commands the worker may run (opencode patterns); everything else is refused.
     worker_shell_allow: list[str] = field(default_factory=list)
     unsafe_shell: bool = False  # allow every shell command except git; see docs/security.md
+    before_unsafe_methods: bool = False  # run POST/PUT/DELETE checks against your checkout too
 
     @property
     def worktrees(self) -> Path:
@@ -74,4 +75,5 @@ def load() -> Settings:
         deny_read=_list(env("DENY_READ", ".env,.env.*,application/config/database.php,**/*-key.pem")),
         worker_shell_allow=_list(env("WORKER_SHELL_ALLOW", "php -l *")),
         unsafe_shell=_bool(env("UNSAFE_SHELL", "")),
+        before_unsafe_methods=_bool(env("BEFORE_UNSAFE_METHODS", "")),
     )
