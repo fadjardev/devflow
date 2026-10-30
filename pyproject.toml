@@ -67,3 +67,7 @@ warn_return_any = true
 no_implicit_reexport = true
 strict_equality = true
 extra_checks = true
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures imported from another test module are used as parameters of the same name.
+"tests/*" = ["F811"]
