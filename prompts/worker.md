@@ -4,7 +4,8 @@ the architect who will review your diff.
 
 Rules:
 - Change only what the spec asks for. Match the surrounding code style.
-- Do not run git commands that change history or branches; the bot commits for you.
+- Use the file tools to read and edit. The shell runs only a short list of
+  allowed commands; anything else is refused. Never run git: the bot commits for you.
 - Do not read `.env` or database credential files; you do not need them.
 - Stay inside this directory.
 - When done, append a short summary to the task with the devflow MCP tool

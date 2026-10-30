@@ -23,8 +23,9 @@ from .config import RUNTIME_DIR, Settings
 
 log = logging.getLogger("devflow.opencode")
 
-GIT_DENY = ["git push*", "git commit*", "git checkout*", "git switch*", "git reset*",
-            "git rebase*", "git merge*", "git branch*", "git worktree*", "git stash*"]
+# Tools that reach the network or start a subagent. A subagent (`task`) runs in a session of
+# its own, without this session's ruleset, so it would escape every rule below.
+NO_TOOLS = ["webfetch", "websearch", "codesearch", "task"]
 
 
 class OpencodeError(RuntimeError):
@@ -60,9 +61,16 @@ def path_pattern(glob: str) -> str:
     return p
 
 
-def ruleset(settings: Settings) -> list[dict]:
+def ruleset(settings: Settings) -> list[dict[str, str]]:
+    """The worker's permissions. opencode applies the LAST matching rule, so the order matters:
+    every shell command is denied, then the project's allow-list opens specific commands, then
+    git is denied again so no allow-list entry (not even `*`) can reopen it. devflow does all git."""
     rules = [{"permission": "read", "pattern": path_pattern(p), "action": "deny"} for p in settings.deny_read]
-    rules += [{"permission": "bash", "pattern": p, "action": "deny"} for p in GIT_DENY]
+    rules.append({"permission": "bash", "pattern": "*", "action": "deny"})
+    allow = ["*"] if settings.unsafe_shell else settings.worker_shell_allow
+    rules += [{"permission": "bash", "pattern": p, "action": "allow"} for p in allow]
+    rules += [{"permission": "bash", "pattern": p, "action": "deny"} for p in ("git", "git *", "*/git *", "*git.exe *")]
+    rules += [{"permission": p, "pattern": "*", "action": "deny"} for p in NO_TOOLS]
     rules += [
         {"permission": "external_directory", "pattern": "*", "action": "deny"},
         {"permission": "question", "pattern": "*", "action": "deny"},

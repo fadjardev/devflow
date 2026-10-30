@@ -120,6 +120,12 @@ class Flow:
     def _project_dir(self, t: tasks.Task) -> Path:
         return projects.directory(self.s, t.project)
 
+    def _unsafe(self) -> str:
+        """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""
+        if not self.s.unsafe_shell:
+            return ""
+        return "\n\n⚠️ UNSAFE_SHELL is on: the worker could run any shell command except git."
+
     async def _sync(self, pdir: Path) -> tuple[str, sync.Fetch]:
         """Fetch, then name the shared branch to build on (origin/development)."""
         fetched = await asyncio.to_thread(sync.fetch, self.s, pdir)
@@ -332,7 +338,7 @@ class Flow:
         stale = "" if fetched.ok else f"\n\n{fetched.note()}"
         await self.n.text(
             f"📋 {task_id} planned — {t.meta.get('title_line') or t.meta.get('title')}\n\n"
-            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}\n\n"
+            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}{self._unsafe()}\n\n"
             f"/approve {task_id} · /reject {task_id} <why> · /show {task_id}"
         )
 
@@ -498,7 +504,7 @@ class Flow:
             stat = await asyncio.to_thread(worktree.diff, wt, t.meta["base"], True)
             caption = (f"✅ {task_id} reviewed and ready — {t.meta.get('title_line') or t.meta.get('title')}\n"
                        f"branch `{t.meta['branch']}`" + (f" · https://{t.meta['vhost']}" if t.meta.get("vhost") else "") +
-                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}\n\n"
+                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}{self._unsafe()}\n\n"
                        f"/approve {task_id} · /reject {task_id} <why> · /diff {task_id}")
             await self.n.text(caption)
             if shot:

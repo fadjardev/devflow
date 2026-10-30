@@ -22,6 +22,9 @@ def doctor(settings: config.Settings) -> int:
     line(bool(settings.allowed_chat_id), "ALLOWED_CHAT_ID set")
     line((settings.vault / "01-Projects").is_dir(), "vault", str(settings.vault))
     line(settings.projects.is_dir(), "projects", str(settings.projects))
+    line(not settings.unsafe_shell, "worker shell restricted",
+         "UNSAFE_SHELL is on: the worker can run any command except git" if settings.unsafe_shell
+         else f"allowed: {', '.join(settings.worker_shell_allow) or 'nothing'}")
     for exe in ("claude", "opencode", "git"):
         line(bool(shutil.which(exe)), f"{exe} on PATH", shutil.which(exe) or "")
     nginx = settings.nginx_prefix / "current" / "nginx.exe"
