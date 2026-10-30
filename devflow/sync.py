@@ -54,12 +54,25 @@ def _has(pdir: Path, ref: str) -> bool:
     return git(pdir, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False) != ""
 
 
+def default_branch(settings: Settings, pdir: Path) -> str:
+    """The remote's default branch (what `<remote>/HEAD` points at), else main or master."""
+    head = git(pdir, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{settings.git_remote}/HEAD", check=False)
+    if head.startswith(f"{settings.git_remote}/"):
+        return head.split("/", 1)[1]
+    for name in ("main", "master"):
+        if _has(pdir, f"{settings.git_remote}/{name}") or _has(pdir, name):
+            return name
+    raise GitError(f"{settings.git_remote} has no HEAD, main or master; set base_branch for this project")
+
+
 def base_ref(settings: Settings, pdir: Path) -> str:
-    """`origin/development` if it exists, else the local `development`."""
-    for ref in (f"{settings.git_remote}/{settings.base_branch}", settings.base_branch):
+    """`origin/development` if it exists, else the local `development`. An empty base_branch
+    means the remote's default branch."""
+    branch = settings.base_branch or default_branch(settings, pdir)
+    for ref in (f"{settings.git_remote}/{branch}", branch):
         if _has(pdir, ref):
             return ref
-    raise GitError(f"neither {settings.git_remote}/{settings.base_branch} nor {settings.base_branch} exists")
+    raise GitError(f"neither {settings.git_remote}/{branch} nor {branch} exists")
 
 
 def sha(pdir: Path, ref: str) -> str:

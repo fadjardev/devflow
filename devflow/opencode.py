@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import httpx
 
 from . import platform
-from .config import RUNTIME_DIR, Settings
+from .config import Settings, runtime_dir
 
 log = logging.getLogger("devflow.opencode")
 
@@ -36,8 +36,8 @@ def config_file(settings: Settings) -> Path:
     """Extra opencode config (OPENCODE_CONFIG). It registers no devflow-mcp: `opencode serve`
     shares one MCP config across all sessions, so it couldn't be bound to one task (ADR 0003).
     The worker reports back in its reply instead."""
-    RUNTIME_DIR.mkdir(exist_ok=True)
-    path = RUNTIME_DIR / "opencode.json"
+    runtime_dir().mkdir(exist_ok=True)
+    path = runtime_dir() / "opencode.json"
     cfg: dict[str, object] = {"$schema": "https://opencode.ai/config.json"}
     path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return path
@@ -94,8 +94,8 @@ class Client:
             raise OpencodeError("opencode not found on PATH")
         port = str(urlparse(self.base).port or 4096)
         env = {**os.environ, "OPENCODE_CONFIG": str(config_file(self.settings))}
-        out = open(RUNTIME_DIR / "opencode-serve.log", "ab")
-        log.info("starting opencode serve on port %s (output in %s)", port, RUNTIME_DIR / "opencode-serve.log")
+        out = open(runtime_dir() / "opencode-serve.log", "ab")
+        log.info("starting opencode serve on port %s (output in %s)", port, runtime_dir() / "opencode-serve.log")
         self._server = subprocess.Popen([exe, "serve", "--port", port], env=env, stdout=out, stderr=out,
                                         **platform.group_kwargs())  # type: ignore[call-overload]
         for _ in range(60):
@@ -105,9 +105,10 @@ class Client:
         log.error("opencode serve did not answer on %s within 60s; see opencode-serve.log", self.base)
         raise OpencodeError(f"opencode serve did not come up on {self.base}")
 
-    async def create_session(self, directory: Path, title: str) -> str:
+    async def create_session(self, directory: Path, title: str, rules: list[dict[str, str]] | None = None) -> str:
+        """A session with the worker's permissions: `rules` (the project's), else the global ones."""
         r = await self.http.post("/session", params={"directory": str(directory)},
-                                 json={"title": title, "permission": ruleset(self.settings)})
+                                 json={"title": title, "permission": rules or ruleset(self.settings)})
         r.raise_for_status()
         return r.json()["id"]
 

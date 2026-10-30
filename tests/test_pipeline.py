@@ -43,7 +43,7 @@ class FakeOpencode:
     async def ensure_server(self):
         pass
 
-    async def create_session(self, directory, title):
+    async def create_session(self, directory, title, rules=None):
         return "ses_fake"
 
     async def prompt(self, session, directory, text, timeout, on_denied=None):

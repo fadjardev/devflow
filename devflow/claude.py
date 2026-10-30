@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import RUNTIME_DIR, Settings
+from .config import Settings, runtime_dir
 
 log = logging.getLogger("devflow.claude")
 
@@ -62,10 +62,10 @@ class Result:
 def mcp_config(settings: Settings, bind: Bind | None, cwd: Path) -> Path:
     """This run's devflow-mcp entry: this venv's interpreter, bound to one task and role.
     One file per run, since runs for different tasks overlap; `run` deletes it afterwards."""
-    folder = RUNTIME_DIR / "mcp"
+    folder = runtime_dir() / "mcp"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"claude-{uuid.uuid4().hex}.json"
-    env = {"DEVFLOW_VAULT": str(settings.vault), "DEVFLOW_CWD": str(cwd),
+    env = {"DEVFLOW_VAULT": str(settings.vault), "DEVFLOW_CWD": str(cwd), "DEVFLOW_RUNTIME": str(runtime_dir()),
            "DEVFLOW_DENY_READ": ",".join(settings.deny_read)}
     if bind:
         env |= {"DEVFLOW_ROLE": bind.role, "DEVFLOW_TASK": bind.task, "DEVFLOW_SCOPE": bind.scope}

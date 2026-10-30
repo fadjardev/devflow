@@ -11,6 +11,7 @@ dependencies = [
     "mcp>=2.2,<3",
     "playwright>=1.45",
     "python-dotenv>=1",
+    "platformdirs>=4",
 ]
 
 [project.optional-dependencies]
@@ -20,8 +21,14 @@ dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "types-PyYAML"]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[project.scripts]
+devflow = "devflow.cli:main"
+
 [tool.setuptools]
-packages = ["devflow"]
+packages = ["devflow", "devflow.vhosts"]
+
+[tool.setuptools.package-data]
+devflow = ["prompts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -45,6 +52,7 @@ warn_unused_ignores = true
 module = [
     "devflow.__main__",
     "devflow.claude",
+    "devflow.cli",
     "devflow.config",
     "devflow.fmt",
     "devflow.gitsafe",
@@ -58,7 +66,8 @@ module = [
     "devflow.tasks",
     "devflow.vault",
     "devflow.verify",
-    "devflow.vhost",
+    "devflow.vhosts",
+    "devflow.vhosts.*",
     "devflow.worktree",
 ]
 disallow_untyped_calls = true

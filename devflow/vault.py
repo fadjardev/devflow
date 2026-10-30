@@ -19,7 +19,7 @@ from typing import Any
 
 import yaml
 
-from .config import RUNTIME_DIR
+from .config import runtime_dir
 
 # Folders anything in devflow may write to, relative to the vault root.
 WRITABLE = ("05-Tasks", "04-Requests", "01-Projects")
@@ -29,7 +29,7 @@ WRITABLE = ("05-Tasks", "04-Requests", "01-Projects")
 def lock_dir() -> Path:
     """Note locks live in devflow's own runtime folder. In the shared temp folder another
     local user could create or delete them (PRD SR11)."""
-    return RUNTIME_DIR / "locks"
+    return runtime_dir() / "locks"
 _FM = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 _H2 = re.compile(r"^## (.+?)\s*$", re.M)
 

@@ -20,11 +20,11 @@ You can also just **ask** about a project from Telegram (`/ask shop where is
 checkout validated?`): Claude reads the code and your notes and answers, changing
 nothing.
 
-> **Status: personal tool, shared as-is.** devflow was built for one developer's
-> setup: Windows, PHP web apps served by a local nginx, and an
-> [Obsidian](https://obsidian.md) vault as the task tracker. The workflow ideas
-> are general; parts of the code are not (see [Requirements](#requirements) and
-> [Known limits](#known-limits)). Issues and forks are welcome.
+> **Status: early (pre-0.2).** devflow grew out of one developer's setup
+> (Windows, PHP apps behind a local nginx, an [Obsidian](https://obsidian.md)
+> vault) and is being generalised: it runs on Windows, Linux and macOS, with or
+> without a vault. Verification is still PHP-centric (see
+> [Known limits](#known-limits)). Issues and pull requests are welcome.
 
 ## Why
 
@@ -214,93 +214,91 @@ keeps working on the last-fetched refs and says so in every message.
 
 ## Requirements
 
-- **Windows.** Worktrees link folders with directory junctions, and the
-  temporary vhosts drive a local `nginx.exe`.
-- **Python 3.11+.**
+- **Windows, Linux or macOS**, with **Python 3.11+** and **git**.
 - **[Claude Code](https://claude.com/claude-code)** (`claude` on `PATH`, logged in)
   and **[opencode](https://opencode.ai)** (`opencode` on `PATH`, with a provider
-  configured), plus **git**.
+  configured).
 - **A Telegram bot**: create one with [@BotFather](https://t.me/BotFather); get your
   numeric chat id from [@userinfobot](https://t.me/userinfobot).
-- **A notes vault** (plain Markdown; [Obsidian](https://obsidian.md) works well)
-  with this layout:
+- **Optional: a notes vault** (plain Markdown; [Obsidian](https://obsidian.md)
+  works well). With one, devflow writes its task notes, requests and project
+  decisions there, where you can read and link them:
 
   ```text
   <vault>/
-    01-Projects/<project>.md   one note per project; devflow knows only these projects
+    01-Projects/<project>.md   project notes (decisions go here)
     04-Requests/                raw requests, written by devflow
     05-Tasks/                   task notes, written by devflow
   ```
 
-  A project's folder is `PROJECTS_PATH/<project>` unless its note's frontmatter
-  sets `path:`. Tasks need it to be a git checkout; `/ask` does not.
-- **Optional, for HTTP checks, linting and screenshots:** a local nginx serving
-  each project from `<nginx prefix>/conf/sites/*.conf` with PHP over FastCGI, laid
-  out like [devcrate](https://github.com/fadjardev/devcrate-stack), the portable
-  Windows PHP stack devflow was built beside. Projects without a vhost still go
-  through plan, code, review, and merge simulation; they just skip the HTTP
-  checks and the screenshot.
+  Without one, devflow keeps the same notes in its own runtime folder.
+- **Optional, for HTTP checks and screenshots:** a vhost provider. Today that is
+  [devcrate](https://github.com/fadjardev/devcrate-stack), a portable Windows
+  nginx + PHP stack. Projects without one still go through plan, code, review
+  and merge simulation; they skip the HTTP checks and the screenshot.
 
 ## Setup
 
-```bat
+```sh
 git clone https://github.com/fadjardev/devflow.git
 cd devflow
 python -m venv .venv
-.venv\Scripts\python -m pip install -e ".[dev]"
-.venv\Scripts\python -m playwright install chromium-headless-shell
-copy .env.example .env
+.venv/bin/python -m pip install -e .          # Windows: .venv\Scripts\python
+.venv/bin/python -m playwright install chromium-headless-shell
+.venv/bin/devflow init                        # asks for the chat id, a vault, your projects
+.venv/bin/devflow doctor
+.venv/bin/devflow run
 ```
 
-Fill in `.env` (see below), then:
+`init` writes `devflow.toml` to your user config folder (see
+[Configuration](#configuration)). `doctor` checks the settings, file
+permissions, the tools on `PATH`, the vhost provider and Playwright, then lists
+each project. `run` starts the bot; it greets you with 🟢 on Telegram.
 
-```bat
-.venv\Scripts\python -m devflow doctor
-.venv\Scripts\python -m devflow
-```
-
-`doctor` checks the token, the vault, the tools on `PATH`, nginx, and Playwright,
-then lists each project with the vhost and PHP version devflow will use. The
-second command starts the bot; it greets you with 🟢 on Telegram. Keep the window
-open, or run it as a scheduled task at logon.
-
-devflow-mcp is wired into each agent run automatically. To use its tools in your
-own interactive Claude Code sessions as well (optional):
-
-```bat
-claude mcp add -s user -e DEVFLOW_VAULT=C:\path\to\vault devflow -- C:\path\to\devflow\.venv\Scripts\python.exe -m devflow.mcp_server
-```
+devflow-mcp is wired into each agent run automatically, bound to that run's
+task. It is not meant to be added to your own Claude Code sessions.
 
 ## Configuration
 
-All settings live in `.env`; [`.env.example`](.env.example) documents each one.
+devflow reads `devflow.toml` from your user config folder
+(`%APPDATA%\devflow\` on Windows, `~/.config/devflow/` on Linux,
+`~/Library/Application Support/devflow/` on macOS), or the file given with
+`--config` or `DEVFLOW_CONFIG`. [`devflow.example.toml`](devflow.example.toml)
+documents every setting. In short:
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `TELEGRAM_TOKEN`, `ALLOWED_CHAT_ID` | — | The bot, and the only chat it answers |
-| `ALLOWED_USER_IDS` | — | Who may command the bot; required when the chat is a group |
-| `VAULT_PATH` | — | The notes vault |
-| `PROJECTS_PATH` | — | Where project checkouts live; worktrees go in `.worktrees\` under it |
-| `DEVCRATE_ROOT` | — | Root of the local nginx/PHP stack (`nginx\`, `php\php-X.Y\`) |
-| `MAX_WORKERS` | `3` | Tasks coding at once (one per project) |
-| `MAX_BOUNCES` | `2` | Reviewer fix-ups before a task is parked for you |
-| `OPENCODE_URL` | `http://127.0.0.1:4096` | devflow starts `opencode serve` here if nothing answers |
-| `OPENCODE_MODEL` | opencode's default | `provider/model` as listed by `opencode models` |
-| `CLAUDE_MODEL` | your default | e.g. `sonnet`, to plan and review more cheaply |
-| `BASE_BRANCH`, `GIT_REMOTE` | `development`, `origin` | Tasks start from `<remote>/<base>` |
-| `BRANCH_PREFIX` | `devflow` | Branches are `<prefix>/<type>/<id>-<slug>` |
-| `OVERLAP_DAYS` | `14` | How far back other unmerged branches count as active |
-| `LINK_PATHS` | see example | Gitignored files and folders a worktree needs to run |
-| `DENY_READ` | see example | Files no agent may read (globs relative to the project) |
-| `WORKER_SHELL_ALLOW` | `php -l *` | Shell commands the worker may run (opencode patterns); everything else is refused |
-| `UNSAFE_SHELL` | `false` | Let the worker run any command except git (not recommended) |
-| `CHECK_ENV_ALLOW` | — | Extra environment variables lint and test commands may see |
-| `BEFORE_UNSAFE_METHODS` | `false` | Also run POST/PUT/DELETE checks against your own checkout |
-| `SHARE_CODE_VIA_TELEGRAM` | `true` | `false`: `/diff` sends a summary and a local path instead of code |
+```toml
+[telegram]
+chat_id = 123456789        # the only chat devflow answers; the token can stay in TELEGRAM_TOKEN
+user_ids = []              # required when chat_id is a group
+
+[paths]
+# vault = "~/notes"        # optional
+
+[safety]
+worker_shell_allow = []    # shell commands the worker may run; everything else is refused
+
+[projects.shop]
+path = "~/code/shop"
+base_branch = "develop"    # default: the remote's default branch
+worker_shell_allow = ["npm run lint"]
+```
+
+Every `[projects.<name>]` table can override `base_branch`, `link_paths`,
+`deny_read`, `worker_shell_allow` and `check_env_allow`. An unknown or
+mistyped setting stops devflow with an error that names it.
+
+**Coming from `.env`?** Without a `devflow.toml`, devflow still reads `.env`
+beside the package as before ([`.env.example`](.env.example)), with projects
+from the vault's `01-Projects` notes. `VAULT_PATH` and `PROJECTS_PATH` must
+be set; nothing falls back to built-in paths anymore. `devflow migrate-env`
+writes a `devflow.toml` with the same settings and projects, and keeps the
+runtime folder where it is.
 
 ## Logs
 
-Everything is logged under `runtime\`, every line tagged with its task id:
+Everything is logged in the runtime folder (`paths.runtime`; by default your
+user data folder, or `runtime/` beside the package with a legacy `.env`), every
+line tagged with its task id:
 
 | File | Holds |
 | --- | --- |
@@ -327,6 +325,11 @@ cause and `/retry`.
   Markdown subset; tables and links arrive as plain text.
 - **Opening a temporary vhost in your own browser** needs a hosts-file entry;
   devflow doesn't add one. Its own checks don't need it.
+- **Verification is PHP-centric**: lint is `php -l` and tests are phpunit/pest,
+  found through the devcrate vhost. Configurable check commands for other stacks
+  are planned for v0.2.
+- **Temporary vhosts** need devcrate (Windows). With the `none` provider, HTTP
+  checks and screenshots are skipped.
 - **Cost**: Claude runs on your Claude Code account. A `/ask` answer costs roughly
   $0.30 on the default model; set `CLAUDE_MODEL` to spend less.
 
@@ -334,26 +337,31 @@ cause and `/retry`.
 
 | Path | Does |
 | --- | --- |
-| `devflow/bot.py` | Telegram commands, chat-id allow-list, `/ask` follow-ups by reply |
+| `devflow/cli.py` | The `devflow` command: `run`, `init`, `migrate-env`, `doctor` |
+| `devflow/config.py` | `devflow.toml` and the project registry; the legacy `.env` |
+| `devflow/bot.py` | Telegram commands, chat and user allow-lists, `/ask` follow-ups by reply |
 | `devflow/pipeline.py` | The phases: plan → gate 1 → code → verify → review → gate 2 → close; `/ask` |
 | `devflow/claude.py` | `claude -p` in each role, with its allow-list and secret-file deny rules |
 | `devflow/opencode.py` | `opencode serve` client, permission ruleset, and watchdog |
-| `devflow/mcp_server.py` | devflow-mcp, the agents' only write path into the vault |
+| `devflow/mcp_server.py` | devflow-mcp, bound to one task and role per run: the agents' only write path into notes |
 | `devflow/tasks.py` | Task notes and the state machine |
 | `devflow/vault.py` | Safe, atomic, locked note writes; Obsidian-tolerant frontmatter |
-| `devflow/projects.py` | Project lookup by name, its checkout, and the vhost that serves it |
-| `devflow/worktree.py` | One git worktree and branch per task |
-| `devflow/vhost.py` | A temporary nginx vhost per task |
+| `devflow/projects.py` | Project lookup by name and its checkout |
+| `devflow/worktree.py` | One git worktree and branch per task; linked-folder snapshots |
+| `devflow/gitsafe.py` | Hardened git, `.git` tamper checks, Claude's read-only git check |
+| `devflow/vhosts/` | Vhost providers: `none`, `devcrate` (a temporary nginx vhost per task) |
+| `devflow/platform.py` | Links, process trees and minimal environments per OS |
+| `devflow/redact.py`, `devflow/security.py` | Secret masking; owner-only file permissions |
 | `devflow/verify.py` | HTTP checks, `php -l`, phpunit, headless screenshot |
 | `devflow/sync.py` | Fetch, base branch, other unmerged branches, merge simulation |
 | `devflow/fmt.py` | Agent Markdown → Telegram HTML, split without breaking code blocks |
-| `devflow/logs.py` | Logging setup behind `runtime\*.log` and `/log` |
-| `prompts/` | The agent prompts: plan, worker, review, close, ask |
+| `devflow/logs.py` | Logging setup behind the runtime `*.log` files and `/log` |
+| `devflow/prompts/` | The agent prompts: plan, worker, review, close, ask |
 
 ## Tests
 
-```bat
-.venv\Scripts\python -m pytest -q
+```sh
+python -m pytest -q
 ```
 
 The suite runs the whole pipeline with faked agents against real git

@@ -281,7 +281,6 @@ def test_only_the_closer_writes_project_notes_and_only_appends(store, vault, mon
 
 def test_the_worker_gets_no_devflow_mcp(tmp_path, monkeypatch):
     """opencode serve is one process for all sessions, so its MCP can't be bound to one task (ADR 0003)."""
-    monkeypatch.setattr(opencode, "RUNTIME_DIR", tmp_path)
     import json
     cfg = json.loads(opencode.config_file(config.load()).read_text(encoding="utf-8"))
     assert "devflow" not in cfg.get("mcp", {})
@@ -443,7 +442,7 @@ def test_verification_runs_without_our_secrets_in_its_environment(tmp_path, monk
 
 def test_note_locks_live_in_the_runtime_dir_not_the_shared_temp_dir():
     from devflow import vault
-    assert vault.lock_dir().is_relative_to(config.RUNTIME_DIR)
+    assert vault.lock_dir().is_relative_to(config.runtime_dir())
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows ACLs: test_windows_acl_*")

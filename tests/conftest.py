@@ -22,6 +22,18 @@ Demo.
 """
 
 
+@pytest.fixture(autouse=True)
+def _runtime(tmp_path, monkeypatch):
+    """Every test writes its runtime files (logs, MCP configs, locks) under its own tmp_path,
+    and config.load() sees a legacy setup in tmp_path, never the developer's own config."""
+    from devflow import config
+    monkeypatch.setenv("DEVFLOW_RUNTIME", str(tmp_path / "runtime"))
+    monkeypatch.delenv("DEVFLOW_CONFIG", raising=False)
+    monkeypatch.setattr(config, "default_config", lambda: tmp_path / "no-such-devflow.toml")
+    for key, sub in (("VAULT_PATH", "vault"), ("PROJECTS_PATH", "projects")):
+        monkeypatch.setenv(key, str(tmp_path / sub))
+
+
 @pytest.fixture
 def vault(tmp_path):
     (tmp_path / "01-Projects").mkdir()
@@ -52,7 +64,7 @@ def logdir(tmp_path, monkeypatch):
 
     root = logging.getLogger()
     saved = (list(root.handlers), root.level, sys.excepthook, threading.excepthook)
-    monkeypatch.setattr(logs, "RUNTIME_DIR", tmp_path / "runtime")
+    monkeypatch.setenv("DEVFLOW_RUNTIME", str(tmp_path / "runtime"))
     logs.setup("devflow", console=False)
     yield tmp_path / "runtime"
     for h in list(root.handlers):
