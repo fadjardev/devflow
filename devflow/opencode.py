@@ -13,7 +13,6 @@ import logging
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -33,18 +32,12 @@ class OpencodeError(RuntimeError):
 
 
 def config_file(settings: Settings) -> Path:
-    """Extra opencode config (OPENCODE_CONFIG) registering devflow-mcp."""
+    """Extra opencode config (OPENCODE_CONFIG). It registers no devflow-mcp: `opencode serve`
+    shares one MCP config across all sessions, so it couldn't be bound to one task (ADR 0003).
+    The worker reports back in its reply instead."""
     RUNTIME_DIR.mkdir(exist_ok=True)
     path = RUNTIME_DIR / "opencode.json"
-    cfg = {
-        "$schema": "https://opencode.ai/config.json",
-        "mcp": {"devflow": {
-            "type": "local",
-            "command": [sys.executable, "-m", "devflow.mcp_server"],
-            "environment": {"DEVFLOW_VAULT": str(settings.vault)},
-            "enabled": True,
-        }},
-    }
+    cfg: dict[str, object] = {"$schema": "https://opencode.ai/config.json"}
     path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     return path
 

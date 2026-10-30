@@ -265,7 +265,6 @@ def test_only_the_closer_writes_project_notes_and_only_appends(store, vault, mon
     assert (vault / "01-Projects" / "demo.app.md").read_text(encoding="utf-8") == before
 
 
-@pending("S5")
 def test_the_worker_gets_no_devflow_mcp(tmp_path, monkeypatch):
     """opencode serve is one process for all sessions, so its MCP can't be bound to one task (ADR 0003)."""
     monkeypatch.setattr(opencode, "RUNTIME_DIR", tmp_path)
@@ -527,3 +526,19 @@ def test_the_close_message_shows_what_the_closer_added_to_the_project_note(setup
 
     asyncio.run(scenario())
     assert "the demo needs a warm cache" in flow.n.texts[-1] and "project note" in flow.n.texts[-1]
+
+
+class GivingUpWorker(FakeOpencode):
+    async def prompt(self, session, directory, text, timeout, on_denied=None):
+        self.prompts.append(text)
+        return "The spec asks for a table that doesn't exist.\nBLOCKED: no `orders` table in this schema"
+
+
+def test_the_worker_gives_up_in_its_reply(setup):
+    flow = setup[0]
+    flow.oc = GivingUpWorker()
+    t = asyncio.run(plan_and_code(flow))
+    assert t.state == "blocked" and t.meta["blocked_from"] == "coding"
+    assert "no `orders` table" in (t.note.section("History") or "")
+    assert "doesn't exist" in (t.note.section("Worker log") or "")
+    assert "worker gave up" in flow.n.texts[-1]

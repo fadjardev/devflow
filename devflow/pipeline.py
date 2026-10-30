@@ -30,6 +30,7 @@ ASK_SLOTS = 2  # questions answered at once; more wait their turn
 ALL_PROJECTS = ("all", "*")
 _TITLE = re.compile(r"TITLE:\s*(\w+)(?:\(([^)]*)\))?!?:\s*(.+)")
 _CONVENTIONAL = re.compile(r"(\w+)(?:\(([^)]*)\))?!?:\s*(.+)")  # title_line, stored without "TITLE:"
+_BLOCKED = re.compile(r"^BLOCKED:[ \t]*(.*)$", re.M)  # the worker gives up (ADR 0003)
 _VERDICT = re.compile(r"VERDICT:\s*(APPROVE|FIXUP)\b(.*)", re.S)
 
 
@@ -431,12 +432,15 @@ class Flow:
         log.info("worker replied (%d chars)", len(reply))
 
         t = self.store.get(task_id)
-        if t.state == "blocked":
-            await self.n.text(f"❓ {task_id} worker gave up: {_clip((t.note.section('History') or '-').splitlines()[-1], 600)}\n"
-                              f"/show {task_id} · /retry {task_id} · /stop {task_id}")
-            return
         if reply:
             self.store.append(task_id, "Worker log", f"#### {tasks.now()} worker reply\n\n{_clip(reply, 3000)}")
+        gave_up = _BLOCKED.search(reply or "")
+        if gave_up:
+            why = gave_up.group(1).strip() or "no reason given"
+            self.store.transition(task_id, "blocked", "bot", f"worker gave up: {why}")
+            await self.n.text(f"❓ {task_id} worker gave up: {_clip(why, 600)}\n"
+                              f"/show {task_id} · /retry {task_id} · /stop {task_id}")
+            return
 
         if conflicts:
             left = await asyncio.to_thread(sync.markers_left, wt, conflicts)
