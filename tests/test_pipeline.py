@@ -60,6 +60,10 @@ class FakeOpencode:
     async def abort(self, session, directory):
         pass
 
+    async def session_usage(self, session, directory):
+        from devflow.usage import Usage
+        return Usage()
+
     async def dispose(self, directory):
         self.disposed.append(Path(directory))
 

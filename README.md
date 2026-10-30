@@ -110,6 +110,8 @@ flowchart LR
 | `/refresh <id>` | Catch a task up with the latest base branch, then verify and review again |
 | `/stop <id>` | Cancel: stop the worker, remove worktree and vhost, keep the branch |
 | `/log` · `/log <n>` · `/log <id>` | Recent warnings and errors, or one task's log lines |
+| `/usage [today\|week\|month\|<id>]` | Tokens and cost by backend, role and model, or every run of one task |
+| `/limits` | Budgets with current use, provider limits and reset times |
 | `/help` | The list |
 
 Messages from any other chat are ignored without a reply.
@@ -205,6 +207,34 @@ devflow collects evidence itself instead of trusting the worker's account:
   and sent with the gate-2 message.
 - **Merge simulation** against the base branch with `git merge-tree`, plus a list
   of other unmerged branches that touch the same files.
+
+## Usage and limits
+
+Every agent run is recorded: tokens (input, output, cache), cost as the backend
+reports it, model, role and duration, in `devflow.db` in the runtime folder.
+Gate messages and `/ask` answers show what the task has used so far;
+`/usage` and `/limits` show the totals.
+
+Budgets are optional:
+
+```toml
+[budget]
+daily_usd = 5.0
+per_task_usd = 2.0
+warn_at = [0.5, 0.8]
+on_exceed = "pause-new"   # or "warn", or "stop"
+
+[limits]
+auto_resume = true
+```
+
+You get one message per threshold per day or month (not repeated after a
+restart). At 100%, `pause-new` refuses new `/task` and `/ask` with the reset
+time and lets running tasks finish; `stop` also parks running tasks at their
+next step. When Claude Code or the worker's provider reports a usage or rate
+limit, the task stops with the reset time it reported, and with `auto_resume`
+it continues by itself afterwards. devflow builds only on documented fields
+([ADR 0007](docs/adr/0007-claude-code-limit-fields.md)).
 
 ## Working alongside a team
 
@@ -365,6 +395,7 @@ cause and `/retry`.
 | `devflow/checks/` | Per-project lint/test commands, the `php` preset, the `devflow-checks` schema |
 | `devflow/sync.py` | Fetch, base branch, other unmerged branches, merge simulation |
 | `devflow/fmt.py` | Agent Markdown → Telegram HTML, split without breaking code blocks |
+| `devflow/usage/` | Usage per run (SQLite), budgets, provider limits, `/usage` and `/limits` |
 | `devflow/logs.py` | Logging setup behind the runtime `*.log` files and `/log` |
 | `devflow/prompts/` | The agent prompts: plan, worker, review, close, ask |
 

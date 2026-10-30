@@ -58,6 +58,25 @@ lint = []                  # e.g. ["npm run lint"]
 test = []                  # e.g. ["npm test -- --run"]
 timeout = 600              # seconds per command
 
+[budget]
+# Spending caps. Leave any out; with none, nothing is ever refused. Costs are the
+# backends' own estimates; a subscription that reports no cost counts tokens only.
+# daily_usd = 5.0
+# monthly_usd = 60.0
+# per_task_usd = 2.0       # a task past this stops at its next step; /retry allows one more
+# daily_tokens = 3_000_000
+# monthly_tokens = 50_000_000
+warn_at = [0.5, 0.8]       # tell me at these fractions of a cap (once per window); 1.0 always counts
+on_exceed = "warn"         # warn | pause-new (refuse new /task and /ask) | stop (also park running tasks)
+# timezone = "Asia/Jakarta"  # windows start at 00:00 / day 1 here; default: this machine's
+# [budget.backend.claude]  # caps for one backend only (claude, opencode)
+# daily_usd = 4.0
+
+[limits]
+# When Claude Code or the worker's provider reports a usage or rate limit, the task stops
+# with the reset time. true = resume it on its own after the reset.
+auto_resume = false
+
 [vhost]
 # Where a task's change is served for HTTP checks and screenshots:
 # "none" (skip them) or "devcrate" (a Windows nginx + PHP stack).

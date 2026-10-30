@@ -48,6 +48,8 @@ Claude plans and reviews, opencode codes, you approve.
 /diff <i>id</i>: the full diff as a file
 /log: recent warnings and errors
 /log <i>id</i>: one task's log lines
+/usage: tokens and cost today (<i>week</i>, <i>month</i>, or an <i>id</i>)
+/limits: budgets, provider limits, reset times
 
 <b>🔧 Fix</b>
 /retry <i>id</i>: resume a blocked task
@@ -68,6 +70,8 @@ MENU = [
     ("show", "Spec, review, history: /show <id>"),
     ("diff", "Full diff as a file: /diff <id>"),
     ("log", "Recent errors, or /log <id>"),
+    ("usage", "Tokens and cost: /usage [today|week|month|<id>]"),
+    ("limits", "Budgets and provider limits"),
     ("retry", "Resume a blocked task: /retry <id>"),
     ("refresh", "Catch up with development: /refresh <id>"),
     ("stop", "Cancel a task: /stop <id>"),
@@ -295,6 +299,17 @@ def _start_answer(update: Update, ctx: ContextTypes.DEFAULT_TYPE, target: Asked,
 
 
 @_handler
+async def cmd_usage(update: Update, ctx):
+    args = _args(update, 1)
+    await _reply(update, _flow(ctx).spend.usage_report(args[0] if args else ""))
+
+
+@_handler
+async def cmd_limits(update: Update, ctx):
+    await _reply(update, _flow(ctx).spend.limits_report())
+
+
+@_handler
 async def cmd_ask(update: Update, ctx):
     args = _args(update, 2)
     if len(args) < 2:
@@ -364,6 +379,16 @@ async def _ignored(update: Update, ctx):
     log.warning("ignored message from chat %s", chat.id if chat else "?")
 
 
+async def _resume_loop(flow: Flow) -> None:
+    """Every minute: resume tasks whose provider limit has reset (limits.auto_resume)."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await flow.resume_due()
+        except Exception:
+            log.exception("auto-resume check failed")
+
+
 def build(settings: Settings) -> Application:
     redact.add(settings.telegram_token)
     if not settings.telegram_token or not settings.allowed_chat_id:
@@ -382,9 +407,14 @@ def build(settings: Settings) -> Application:
         except Exception:
             log.warning("could not set the command menu", exc_info=True)
         await flow.recover()
+        if settings.budget.auto_resume:
+            app.bot_data["resumer"] = asyncio.create_task(_resume_loop(flow))
         await flow.n.text("🟢 devflow up. /help")
 
     async def on_stop(app: Application) -> None:
+        resumer = app.bot_data.get("resumer")
+        if resumer:
+            resumer.cancel()
         flow = app.bot_data.get("flow")
         if flow:
             await flow.close()
@@ -401,7 +431,7 @@ def build(settings: Settings) -> Application:
     for name, fn in [("start", cmd_help), ("help", cmd_help), ("task", cmd_task), ("status", cmd_status),
                      ("show", cmd_show), ("approve", cmd_approve), ("reject", cmd_reject), ("answer", cmd_reject),
                      ("diff", cmd_diff), ("retry", cmd_retry), ("refresh", cmd_refresh), ("stop", cmd_stop),
-                     ("log", cmd_log), ("ask", cmd_ask)]:
+                     ("log", cmd_log), ("ask", cmd_ask), ("usage", cmd_usage), ("limits", cmd_limits)]:
         app.add_handler(CommandHandler(name, fn, filters=me))
     app.add_handler(MessageHandler(me & filters.REPLY & filters.TEXT & ~filters.COMMAND, on_reply))
     app.add_handler(MessageHandler(~me, _ignored))

@@ -12,6 +12,7 @@ dependencies = [
     "playwright>=1.45",
     "python-dotenv>=1",
     "platformdirs>=4",
+    "tzdata; sys_platform == 'win32'",  # zoneinfo has no time zone database of its own there
 ]
 
 [project.optional-dependencies]
@@ -25,7 +26,7 @@ build-backend = "setuptools.build_meta"
 devflow = "devflow.cli:main"
 
 [tool.setuptools]
-packages = ["devflow", "devflow.checks", "devflow.vhosts"]
+packages = ["devflow", "devflow.checks", "devflow.usage", "devflow.vhosts"]
 
 [tool.setuptools.package-data]
 devflow = ["prompts/*.md"]
@@ -66,6 +67,8 @@ module = [
     "devflow.security",
     "devflow.sync",
     "devflow.tasks",
+    "devflow.usage",
+    "devflow.usage.*",
     "devflow.vault",
     "devflow.verify",
     "devflow.vhosts",

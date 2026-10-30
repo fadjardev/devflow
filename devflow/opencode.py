@@ -18,8 +18,9 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import platform
+from . import platform, usage
 from .config import Settings, runtime_dir
+from .usage import Limit, Usage
 
 log = logging.getLogger("devflow.opencode")
 
@@ -30,6 +31,14 @@ NO_TOOLS = ["webfetch", "websearch", "codesearch", "task"]
 
 class OpencodeError(RuntimeError):
     pass
+
+
+class OpencodeLimit(OpencodeError):
+    """The model provider refused the worker's run: HTTP 429 or an exhausted quota."""
+
+    def __init__(self, message: str, limit: Limit):
+        super().__init__(message)
+        self.limit = limit
 
 
 def config_file(settings: Settings) -> Path:
@@ -162,9 +171,22 @@ class Client:
         err = (data.get("info") or {}).get("error")
         if err:
             log.error("opencode session %s ended with an error: %s", session, json.dumps(err)[:1000])
+            hit = usage.opencode_limit(err)
+            if hit:
+                raise OpencodeLimit(f"opencode: {hit.reason}", hit)
             raise OpencodeError(f"opencode: {json.dumps(err)[:500]}")
         texts = [p.get("text", "") for p in data.get("parts", []) if p.get("type") == "text"]
         return "\n".join(t for t in texts if t).strip()
+
+    async def session_usage(self, session: str, directory: Path) -> Usage:
+        """Tokens and cost of every assistant message in the session so far."""
+        try:
+            r = await self.http.get(f"/session/{session}/message", params={"directory": str(directory)}, timeout=30)
+            r.raise_for_status()
+            return usage.opencode_usage(r.json())
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("could not read opencode usage for %s: %s", session, e)
+            return Usage()
 
     async def abort(self, session: str, directory: Path) -> None:
         try:
