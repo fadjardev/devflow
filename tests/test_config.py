@@ -42,6 +42,7 @@ def test_a_legacy_env_file_gives_the_same_settings_as_before(tmp_path, clean_env
     }
     assert {k: getattr(s, k) for k in before} == before
     assert s.vhost_provider == "devcrate" and s.registry is None and not s.vault_is_own
+    assert s.checks == config.CheckConfig(preset="php")  # php -l and phpunit, as always
     assert s.worktrees == Path(r"C:\work\projects") / ".worktrees"
 
 

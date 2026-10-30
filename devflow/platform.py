@@ -54,9 +54,11 @@ def group_kwargs() -> dict[str, object]:
     return {"start_new_session": True}
 
 
-def run(args: Sequence[str], cwd: Path, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
-    """subprocess.run with a minimal environment, no stdin, and the whole tree killed on timeout."""
-    proc = subprocess.Popen(list(args), cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+def run(args: Sequence[str] | str, cwd: Path, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """subprocess.run with a minimal environment, no stdin, and the whole tree killed on timeout.
+    A string is passed to Windows as the exact command line (see run_shell)."""
+    cmd = args if isinstance(args, str) else list(args)
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
                             **group_kwargs())  # type: ignore[call-overload]
     try:
@@ -64,8 +66,17 @@ def run(args: Sequence[str], cwd: Path, env: dict[str, str], timeout: float) -> 
     except subprocess.TimeoutExpired:
         kill_tree(proc)
         out, err = proc.communicate()
-        return subprocess.CompletedProcess(list(args), -9, out, err + f"\n(killed after {int(timeout)}s)")
-    return subprocess.CompletedProcess(list(args), proc.returncode, out, err)
+        return subprocess.CompletedProcess(cmd, -9, out, err + f"\n(killed after {int(timeout)}s)")
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def run_shell(command: str, cwd: Path, env: dict[str, str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """A command line from the project's settings, through the OS shell (so `npm` finds npm.cmd)."""
+    if sys.platform == "win32":
+        # cmd's own quoting: /s /c strips the outer pair and runs the rest as typed. Passing a
+        # list would escape the inner quotes the way C programs expect, which cmd doesn't read.
+        return run(f'cmd /d /s /c "{command}"', cwd, env, timeout)
+    return run(["/bin/sh", "-c", command], cwd, env, timeout)
 
 
 def is_link(path: str | Path) -> bool:

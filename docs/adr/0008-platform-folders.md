@@ -19,4 +19,4 @@ Legacy mode keeps `runtime/` beside the package.
 ## Consequences
 
 One small, dependency-free package (MIT) is added. The runtime folder is
-created owner-only (ADR-less detail in `docs/security.md`).
+created owner-only (see `docs/security.md`).

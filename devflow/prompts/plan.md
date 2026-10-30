@@ -27,6 +27,14 @@ Prefer a change that stays out of those files. If the task must touch one,
 add an **Overlap** item to the spec naming the branch and file, and keep the
 edit in that file as small as possible.
 
+## What devflow checks after the worker
+
+Lint and tests, run in the worktree:
+
+$checks
+
+HTTP checks from your spec: $http.
+
 ## What to do
 
 1. Call `task_read` with task_id `$task_id` for the full note.
@@ -50,8 +58,8 @@ edit in that file as small as possible.
      `contains`, `absent`, `headers`, `data`. Pages behind a login usually answer
      302 — use paths that prove the change without a session where you can, and say
      in the spec what must be checked by hand otherwise.
-   - **Tests** — if the touched code is testable, ask for a focused test; if the
-     project has no test setup, say so and don't invent one.
+   - **Tests** — if the touched code is testable and the project runs tests (see
+     above), ask for a focused test; if it doesn't, say so and don't invent a setup.
 4. Call `task_update_state(task_id="$task_id", to="planned")`. If the request cannot
    be planned (unclear, or needs a decision from a human), call it with
    `to="blocked"` and put the question in `note` instead.
