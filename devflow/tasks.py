@@ -16,6 +16,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import vault
 from .vault import Note, VaultError
@@ -85,18 +86,18 @@ class Task:
 
     @property
     def id(self) -> str:
-        return self.note.meta["id"]
+        return str(self.note.meta["id"])
 
     @property
     def project(self) -> str:
-        return self.note.meta["project_name"]
+        return str(self.note.meta["project_name"])
 
     @property
     def state(self) -> str:
-        return self.note.meta["state"]
+        return str(self.note.meta["state"])
 
     @property
-    def meta(self) -> dict:
+    def meta(self) -> dict[str, Any]:
         return self.note.meta
 
 
@@ -176,7 +177,7 @@ class TaskStore:
             vault.write(path, note)
         return Task(path, note)
 
-    def update(self, task_id: str, **fields) -> Task:
+    def update(self, task_id: str, **fields: Any) -> Task:
         path = self._find(task_id)
         with vault.locked(path):
             note = vault.read(path)
@@ -185,7 +186,7 @@ class TaskStore:
             vault.write(path, note)
         return Task(path, note)
 
-    def transition(self, task_id: str, to: str, actor: str, reason: str = "", **fields) -> Task:
+    def transition(self, task_id: str, to: str, actor: str, reason: str = "", **fields: Any) -> Task:
         if to not in STATES:
             raise TransitionError(f"unknown state: {to}")
         path = self._find(task_id)

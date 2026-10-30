@@ -15,12 +15,15 @@ They also need to keep its safety model intact.
   general case. Agreeing on the shape up front saves you from rewriting it.
 - **Security problems:** please **don't** open a public issue. Report them
   privately through GitHub's *Report a vulnerability* button on the
-  repository's Security tab. See [Safety changes](#safety-changes) for what
-  counts.
+  repository's Security tab. [SECURITY.md](SECURITY.md) says what counts and
+  what to expect.
+
+Everyone taking part is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Development setup
 
-You need Python 3.10+ and git. Claude Code, opencode, nginx and a Telegram bot
+You need Python 3.11+ and git. Claude Code, opencode, nginx and a Telegram bot
 are **not** needed to run the tests, because the agents are faked.
 
 ```bat
@@ -29,6 +32,8 @@ cd devflow
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 .venv\Scripts\python -m pytest -q
+.venv\Scripts\python -m ruff check devflow tests
+.venv\Scripts\python -m mypy
 ```
 
 On Linux or macOS, use `.venv/bin/python` instead. Some parts (directory
@@ -45,9 +50,12 @@ To run the bot itself, follow [Setup](README.md#setup) in the README.
 3. **Add or update tests.** Pipeline behaviour is tested end to end with faked
    agents against real git repositories (`tests/test_pipeline.py`); follow
    that pattern rather than mocking git.
-4. Run the full suite (`python -m pytest -q`) and make sure it passes.
+4. Run the tests, ruff and mypy (see above) and make sure they pass. CI runs
+   the same checks on Windows, Linux and macOS.
 5. Update the README when you change a command, a setting (also in
-   `.env.example`), a requirement, or a known limit.
+   `.env.example`), a requirement, or a known limit, and add a line under
+   *Unreleased* in [CHANGELOG.md](CHANGELOG.md) for anything a user would
+   notice.
 
 ### Branches
 
@@ -83,7 +91,9 @@ Match the surrounding code. The existing style is:
   at the top of each module;
 - a module docstring that says what the module is for and why;
 - comments only where the *why* isn't obvious from the code;
-- `logging` (with the task id context from `devflow.logs`) instead of `print`.
+- `logging` (with the task id context from `devflow.logs`) instead of `print`;
+- new modules pass `mypy --strict`: add them to the strict list in
+  `pyproject.toml`.
 
 ### Commit messages
 

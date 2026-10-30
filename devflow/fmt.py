@@ -67,7 +67,9 @@ def split(md: str, limit: int = LIMIT) -> list[str]:
             line = line[limit:]
         lines.append(line)
 
-    chunks, cur, size, fence = [], [], 0, ""
+    chunks: list[str] = []
+    cur: list[str] = []
+    size, fence = 0, ""
     for line in lines:
         if cur and size + len(line) + 1 > limit:
             if fence:

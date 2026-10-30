@@ -18,6 +18,8 @@ import re
 import sys
 import threading
 from pathlib import Path
+from types import TracebackType
+from typing import Any
 
 from .config import RUNTIME_DIR
 
@@ -72,15 +74,16 @@ def setup(name: str = "devflow", console: bool = True, rotate: bool = True) -> N
     for noisy in _NOISY:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    def uncaught(kind, value, tb):
+    def uncaught(kind: type[BaseException], value: BaseException, tb: TracebackType | None) -> None:
         if issubclass(kind, KeyboardInterrupt):
             sys.__excepthook__(kind, value, tb)
             return
         log.critical("uncaught exception", exc_info=(kind, value, tb))
 
     def thread_uncaught(args: threading.ExceptHookArgs) -> None:
+        exc = args.exc_value or args.exc_type()
         log.error("uncaught exception in thread %s", args.thread.name if args.thread else "?",
-                  exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+                  exc_info=(args.exc_type, exc, args.exc_traceback))
 
     sys.excepthook = uncaught
     threading.excepthook = thread_uncaught
@@ -90,7 +93,7 @@ def watch_loop(loop: asyncio.AbstractEventLoop) -> None:
     """Log what asyncio would otherwise print once, at garbage collection, or not at all
     (e.g. "Task exception was never retrieved")."""
 
-    def handler(_loop, context: dict) -> None:
+    def handler(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
         exc = context.get("exception")
         log.error("asyncio: %s", context.get("message", "unhandled error"),
                   exc_info=(type(exc), exc, exc.__traceback__) if exc else None)

@@ -2,7 +2,7 @@
 name = "devflow"
 version = "0.1.0"
 description = "Supervised AI coding workflow driven from Telegram: Claude Code plans and reviews, opencode writes the code, you approve the plan and the diff"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "python-telegram-bot>=21",
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11", "types-PyYAML"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -25,3 +25,45 @@ packages = ["devflow"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["devflow"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+# Modules converted to strict typing. Add a module here once it passes; new modules start here.
+[[tool.mypy.overrides]]
+module = [
+    "devflow.__main__",
+    "devflow.claude",
+    "devflow.config",
+    "devflow.fmt",
+    "devflow.logs",
+    "devflow.projects",
+    "devflow.sync",
+    "devflow.tasks",
+    "devflow.vault",
+    "devflow.verify",
+    "devflow.vhost",
+    "devflow.worktree",
+]
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true

@@ -2,7 +2,6 @@ import asyncio
 import logging
 
 import httpx
-import pytest
 from telegram.error import NetworkError
 
 from devflow import bot, config, logs, opencode
@@ -43,7 +42,7 @@ def test_tail_keeps_tracebacks_with_their_entry_and_filters_by_task(logdir):
     log.warning("first")
     logs.task_id.set("261002-07")
     try:
-        1 / 0
+        1 / 0  # noqa: B018
     except ZeroDivisionError:
         log.exception("division")
     logs.task_id.set("-")

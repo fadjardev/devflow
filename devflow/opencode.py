@@ -148,7 +148,7 @@ class Client:
                 self.http.post(f"/session/{session}/message", params={"directory": str(directory)}, json=body),
                 timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await self.abort(session, directory)
             log.error("worker timed out after %ds; session %s aborted", timeout, session)
             raise OpencodeError(f"worker still busy after {int(timeout // 60)} minutes; aborted") from None

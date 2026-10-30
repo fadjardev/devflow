@@ -1,0 +1,47 @@
+name: Bug report
+description: Something devflow did that it shouldn't, or didn't do that it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problems:** don't file them here. Use *Report a vulnerability*
+        on the Security tab instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran (command or Telegram message), what you expected, and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: |
+        The relevant lines from `/log <id>` or `runtime/devflow-errors.log`.
+        Remove tokens, secrets and private code first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: devflow version or commit
+      placeholder: "0.1.0, or the output of git rev-parse --short HEAD"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, Linux, macOS]
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+  - type: input
+    id: agents
+    attributes:
+      label: Claude Code and opencode versions
+      placeholder: "claude --version / opencode --version"

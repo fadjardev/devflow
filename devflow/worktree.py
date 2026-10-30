@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import stat
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import Settings
@@ -20,7 +22,7 @@ _ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
         "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"}
 
 
-def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess:
+def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", env=_ENV, stdin=subprocess.DEVNULL, timeout=timeout)
@@ -40,7 +42,8 @@ def slug(text: str, limit: int = 40) -> str:
     return s[:limit].rstrip("-") or "task"
 
 
-def branch_name(kind: str, task_id: str, title: str, prefix: str = "devflow", taken=lambda name: False) -> str:
+def branch_name(kind: str, task_id: str, title: str, prefix: str = "devflow",
+                taken: Callable[[str], bool] = lambda name: False) -> str:
     """devflow/fix/261002-01-sort-columns — namespaced so colleagues see where it came from,
     and never a name that already exists locally or on the remote."""
     kind = kind if kind in ("feat", "fix", "refactor", "chore", "docs", "perf") else "fix"
@@ -114,6 +117,17 @@ def diff(wt: Path, base: str, stat: bool = False) -> str:
     return git(wt, "diff", "--stat" if stat else "--patch", f"{base}...HEAD")
 
 
+def _is_link(path: str) -> bool:
+    """A symlink or a Windows junction. os.path.isjunction only exists from Python 3.12."""
+    if os.path.islink(path):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    if isjunction is not None:
+        return bool(isjunction(path))
+    attrs = getattr(os.lstat(path), "st_file_attributes", 0)
+    return bool(attrs & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
 def remove(project_dir: Path, wt: Path) -> None:
     """Remove the worktree but keep its branch. Junctions go first, so nothing follows them."""
     if not wt.exists():
@@ -122,7 +136,7 @@ def remove(project_dir: Path, wt: Path) -> None:
     for dirpath, dirnames, _ in os.walk(wt):
         for d in list(dirnames):
             p = os.path.join(dirpath, d)
-            if os.path.isjunction(p) or os.path.islink(p):
+            if _is_link(p):
                 os.rmdir(p)  # removes the link only, never the target
                 dirnames.remove(d)
     git(project_dir, "worktree", "remove", "--force", str(wt))

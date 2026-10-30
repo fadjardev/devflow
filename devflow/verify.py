@@ -19,6 +19,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -36,8 +37,8 @@ class Check:
     expect_status: int | None = 200
     contains: str = ""
     absent: str = ""
-    headers: dict = field(default_factory=dict)
-    data: dict | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    data: dict[str, Any] | None = None
 
 
 @dataclass

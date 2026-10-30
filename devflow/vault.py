@@ -13,8 +13,10 @@ import os
 import re
 import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -46,7 +48,7 @@ def safe_path(vault: Path, relative: str | Path) -> Path:
 
 
 @contextlib.contextmanager
-def locked(path: Path, timeout: float = 15.0):
+def locked(path: Path, timeout: float = 15.0) -> Iterator[None]:
     _LOCK_DIR.mkdir(parents=True, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9._-]", "_", str(path.resolve()))[-150:]
     lock = _LOCK_DIR / f"{name}.lock"
@@ -62,7 +64,7 @@ def locked(path: Path, timeout: float = 15.0):
                     lock.unlink()
                     continue
             if time.monotonic() > deadline:
-                raise TimeoutError(f"note is locked: {path}")
+                raise TimeoutError(f"note is locked: {path}") from None
             time.sleep(0.05)
     try:
         yield
@@ -75,7 +77,7 @@ def locked(path: Path, timeout: float = 15.0):
 _DQ = re.compile(r'"([^"\n]*)"')
 
 
-def _load_yaml(text: str) -> dict:
+def _load_yaml(text: str) -> dict[str, Any]:
     """Obsidian tolerates `path: "E:\\dev\\x"`; strict YAML reads `\\d` as an escape. Accept both."""
     try:
         return yaml.safe_load(text) or {}
@@ -86,13 +88,13 @@ def _load_yaml(text: str) -> dict:
 
 @dataclass
 class Note:
-    meta: dict
+    meta: dict[str, Any]
     body: str
     raw_fm: str | None = None   # frontmatter exactly as read
-    _snapshot: dict | None = None
+    _snapshot: dict[str, Any] | None = None
 
     @classmethod
-    def parse(cls, text: str) -> "Note":
+    def parse(cls, text: str) -> Note:
         m = _FM.match(text)
         if not m:
             return cls({}, text)

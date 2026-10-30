@@ -7,13 +7,14 @@ so the bot gives a stranger nothing to probe.
 from __future__ import annotations
 
 import asyncio
-import re
+import functools
 import io
 import logging
+import re
 from collections import OrderedDict
 from pathlib import Path
 
-from telegram import BotCommand, BotCommandScopeChat, Update
+from telegram import BotCommand, BotCommandScopeChat, Chat, Message, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest, NetworkError, RetryAfter, TimedOut
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
@@ -86,7 +87,8 @@ async def _retry(what: str, call):
         try:
             return await call()
         except RetryAfter as e:
-            wait = float(getattr(e.retry_after, "total_seconds", lambda: e.retry_after)())
+            after = e.retry_after  # seconds, or a timedelta in newer PTB
+            wait = float(after.total_seconds() if hasattr(after, "total_seconds") else after)
             log.warning("Telegram flood limit; retrying %s in %.0fs", what, wait)
             await asyncio.sleep(wait)
         except Exception as e:
@@ -108,7 +110,7 @@ class TelegramNotifier:
     async def text(self, message: str) -> None:
         for chunk in fmt.split(message):
             send = lambda text, mode: self.app.bot.send_message(self.chat_id, text, parse_mode=mode)  # noqa: E731
-            await _retry(f"message {chunk[:60]!r}", lambda: _deliver(send, chunk))
+            await _retry(f"message {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
 
     async def photo(self, path: Path, caption: str) -> None:
         async def send():
@@ -121,9 +123,22 @@ def _flow(ctx: ContextTypes.DEFAULT_TYPE) -> Flow:
     return ctx.application.bot_data["flow"]
 
 
+def _message(update: Update) -> Message:
+    """The command's message. Handlers are registered for messages only, so it is always there."""
+    if update.effective_message is None:
+        raise RuntimeError("update without a message")
+    return update.effective_message
+
+
+def _chat(update: Update) -> Chat:
+    if update.effective_chat is None:
+        raise RuntimeError("update without a chat")
+    return update.effective_chat
+
+
 def _args(update: Update, n: int) -> list[str]:
     """Split the message into the command plus up to n arguments; the last keeps its newlines."""
-    parts = (update.effective_message.text or "").split(None, n)
+    parts = (_message(update).text or "").split(None, n)
     return parts[1:]
 
 
@@ -138,8 +153,9 @@ async def _deliver(send, chunk: str):
 
 async def _reply(update: Update, text: str) -> list:
     """Reply with Markdown-ish text (see fmt), split as needed. Returns the sent messages."""
-    send = lambda t, mode: update.effective_message.reply_text(t, parse_mode=mode)  # noqa: E731
-    sent = [await _retry(f"reply {chunk[:60]!r}", lambda: _deliver(send, chunk)) for chunk in fmt.split(text)]
+    send = lambda t, mode: _message(update).reply_text(t, parse_mode=mode)  # noqa: E731
+    sent = [await _retry(f"reply {chunk[:60]!r}", functools.partial(_deliver, send, chunk))
+            for chunk in fmt.split(text)]
     return [m for m in sent if m is not None]
 
 
@@ -164,7 +180,7 @@ def _handler(fn):
 
 @_handler
 async def cmd_help(update: Update, ctx):
-    await _retry("help", lambda: update.effective_message.reply_text(HELP, parse_mode=ParseMode.HTML))
+    await _retry("help", lambda: _message(update).reply_text(HELP, parse_mode=ParseMode.HTML))
 
 
 @_handler
@@ -194,7 +210,7 @@ async def cmd_approve(update: Update, ctx):
     args = _args(update, 1)
     if not args:
         raise FlowError("usage: /approve <id>")
-    await update.effective_chat.send_action(ChatAction.TYPING)
+    await _chat(update).send_action(ChatAction.TYPING)
     await _reply(update, await _flow(ctx).approve(args[0]))
 
 
@@ -214,7 +230,7 @@ async def cmd_diff(update: Update, ctx):
     patch = _flow(ctx).diff(args[0])
     if not patch:
         raise FlowError("empty diff")
-    await update.effective_message.reply_document(io.BytesIO(patch.encode("utf-8")), filename=f"{args[0]}.diff")
+    await _message(update).reply_document(io.BytesIO(patch.encode("utf-8")), filename=f"{args[0]}.diff")
 
 
 @_handler
@@ -230,7 +246,7 @@ async def cmd_refresh(update: Update, ctx):
     args = _args(update, 1)
     if not args:
         raise FlowError("usage: /refresh <id>")
-    await update.effective_chat.send_action(ChatAction.TYPING)
+    await _chat(update).send_action(ChatAction.TYPING)
     await _reply(update, await _flow(ctx).refresh(args[0]))
 
 
@@ -277,7 +293,7 @@ async def cmd_ask(update: Update, ctx):
         target = _flow(ctx).ask_target(args[0])
     except VaultError as e:
         raise FlowError(f"{e}\n\nThe project comes first: /ask asm where is login handled?") from None
-    await update.effective_chat.send_action(ChatAction.TYPING)
+    await _chat(update).send_action(ChatAction.TYPING)
     await _reply(update, f"🤔 looking into {target.label}…")
     _start_answer(update, ctx, target, args[1])
 
@@ -285,12 +301,12 @@ async def cmd_ask(update: Update, ctx):
 @_handler
 async def on_reply(update: Update, ctx):
     """A plain-text reply to an /ask answer continues that conversation."""
-    replied = update.effective_message.reply_to_message
+    replied = _message(update).reply_to_message
     follow = ctx.application.bot_data.get("asks", {}).get(replied.message_id) if replied else None
     if not follow:
         raise FlowError("To follow up, reply to an /ask answer. For anything else, use a command (/help).")
     await _reply(update, f"🤔 following up on {follow.label}…")
-    _start_answer(update, ctx, follow, update.effective_message.text or "")
+    _start_answer(update, ctx, follow, _message(update).text or "")
 
 
 @_handler
