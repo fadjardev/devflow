@@ -44,3 +44,36 @@ jobs:
         run: python -m mypy
       - name: Tests
         run: python -m pytest -q
+
+  package:
+    name: wheel installs and runs (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Build
+        run: python -m pip install build pipx && python -m build
+      - name: Install the wheel with pipx
+        run: python -m pipx install dist/*.whl
+      - name: devflow runs from the installed wheel
+        run: |
+          devflow --version
+          mkdir -p smoke/app && git -C smoke/app init -q
+          printf '[telegram]\nchat_id = 1\n[paths]\nruntime = "rt"\n[projects.app]\npath = "app"\n' > smoke/devflow.toml
+          set +e
+          DEVFLOW_CONFIG=smoke/devflow.toml devflow doctor | tee doctor.txt
+          set -e
+          grep -q "settings: .*devflow.toml" doctor.txt
+          grep -q "ok   app:" doctor.txt

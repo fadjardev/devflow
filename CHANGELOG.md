@@ -7,8 +7,21 @@ things, and the changelog says how).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-30
+
+The first public release. devflow now runs on Windows, Linux and macOS, with
+or without a vault, and its safety model is enforced by code; see
+[docs/security.md](docs/security.md) for what that covers and what it doesn't.
+Upgrading from 0.1: read the **Breaking** items below, then run
+`devflow migrate-env`.
+
 ### Added
 
+- Published on PyPI as `devflow-bot` (the command is still `devflow`), with
+  a tag-triggered release workflow, build provenance attestations, and a
+  `requirements.lock` with hashes on each GitHub release.
+- [docs/service.md](docs/service.md): running devflow under systemd, launchd
+  or Task Scheduler. `devflow --version`.
 - CI on Windows, Linux and macOS with Python 3.11 and the latest release:
   ruff, mypy and the test suite.
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`,

@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import config, projects, security, vhosts
+from . import __version__, config, projects, security, vhosts
 
 # -- doctor ---------------------------------------------------------------------------------
 
@@ -67,7 +67,8 @@ def doctor(settings: config.Settings, fix: bool = False, config_file: Path | Non
         line(True, "playwright headless chromium launches")
     except Exception as e:
         first = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
-        line(False, "playwright headless chromium", f"{first}; run: python -m playwright install chromium-headless-shell")
+        line(False, "playwright headless chromium", f"{first}; for screenshots run: "
+             f"\"{sys.executable}\" -m playwright install chromium-headless-shell")
 
     print("\nprojects")
     names = projects.names(settings)
@@ -191,6 +192,7 @@ def init(target: Path, ask: Callable[[str], str] = input, force: bool = False) -
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="devflow", description="Supervised AI coding workflow driven from Telegram.")
+    parser.add_argument("--version", action="version", version=f"devflow {__version__}")
     parser.add_argument("--config", type=Path, help="devflow.toml to use (default: DEVFLOW_CONFIG, then "
                                                    f"{config.default_config()}, then the legacy .env)")
     sub = parser.add_subparsers(dest="command")
@@ -212,7 +214,7 @@ def main(argv: list[str] | None = None) -> None:
     except config.ConfigError as e:
         raise SystemExit(f"devflow: {e}") from None
     if args.command == "doctor":
-        used = args.config or (config.default_config() if config.default_config().is_file() else None)
+        used = Path(settings.source) if settings.registry is not None else None  # the TOML that was read
         raise SystemExit(doctor(settings, fix=args.fix, config_file=used))
     from .bot import main as run_bot
     run_bot(settings)

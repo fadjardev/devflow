@@ -20,12 +20,27 @@ You can also just **ask** about a project from Telegram (`/ask shop where is
 checkout validated?`): Claude reads the code and your notes and answers, changing
 nothing.
 
-> **Status: early (pre-0.2).** devflow grew out of one developer's setup
-> (Windows, PHP apps behind a local nginx, an [Obsidian](https://obsidian.md)
-> vault) and is being generalised: it runs on Windows, Linux and macOS, with or
-> without a vault, and runs each project's own lint and test commands.
-> Temporary sites for HTTP checks still need devcrate (see
-> [Known limits](#known-limits)). Issues and pull requests are welcome.
+> **Status: 0.2, alpha.** devflow grew out of one developer's setup and now
+> runs on Windows, Linux and macOS, with or without an
+> [Obsidian](https://obsidian.md) vault, and runs each project's own lint and
+> test commands. Read the [Safety model](#safety-model) before you use it, and
+> the [Known limits](#known-limits). Issues and pull requests are welcome.
+
+## Quick start
+
+You need Python 3.11+, git, a logged-in [Claude Code](https://claude.com/claude-code),
+[opencode](https://opencode.ai) with a provider, and a Telegram bot token from
+[@BotFather](https://t.me/BotFather).
+
+```sh
+pipx install devflow-bot
+devflow init        # your chat id (from @userinfobot), optionally a vault, your projects
+devflow doctor      # checks the setup
+devflow run         # 🟢 on Telegram means it's listening
+```
+
+Then, in Telegram: `/task <project> <what you want>`. To keep it running, see
+[docs/service.md](docs/service.md).
 
 ## Why
 
@@ -282,20 +297,23 @@ keeps working on the last-fetched refs and says so in every message.
 ## Setup
 
 ```sh
-git clone https://github.com/fadjardev/devflow.git
-cd devflow
-python -m venv .venv
-.venv/bin/python -m pip install -e .          # Windows: .venv\Scripts\python
-.venv/bin/python -m playwright install chromium-headless-shell
-.venv/bin/devflow init                        # asks for the chat id, a vault, your projects
-.venv/bin/devflow doctor
-.venv/bin/devflow run
+pipx install devflow-bot    # the command is `devflow`
+devflow init                # asks for the chat id, a vault, your projects
+devflow doctor              # for screenshots it prints the one-time browser install command
+devflow run
 ```
+
+To install exactly the dependency versions a release was tested with, use the
+`requirements.lock` attached to the GitHub release:
+`pip install --require-hashes -r requirements.lock && pip install --no-deps devflow-bot`.
+From a checkout: `pip install -e .`.
 
 `init` writes `devflow.toml` to your user config folder (see
 [Configuration](#configuration)). `doctor` checks the settings, file
 permissions, the tools on `PATH`, the vhost provider and Playwright, then lists
 each project. `run` starts the bot; it greets you with 🟢 on Telegram.
+[docs/service.md](docs/service.md) shows how to run it as a systemd, launchd
+or Task Scheduler service.
 
 devflow-mcp is wired into each agent run automatically, bound to that run's
 task. It is not meant to be added to your own Claude Code sessions.
@@ -355,6 +373,16 @@ cause and `/retry`.
 
 ## Known limits
 
+- **The worker is restricted, not sandboxed.** A shell command you allow it,
+  or a test devflow runs, executes the worker's code as you. An OS-level
+  sandbox is planned for v0.3. See [docs/security.md](docs/security.md).
+- **Temporary sites for HTTP checks** exist only for devcrate (a Windows
+  nginx + PHP stack). Elsewhere HTTP checks and screenshots are skipped; lint
+  and tests still run. Providers for Herd/Valet, docker compose and a custom
+  command are planned.
+- **Task state lives in Markdown notes.** Moving it to SQLite, resuming a
+  phase after a restart, and keeping `/ask` follow-ups across restarts are
+  planned for v0.3.
 - **Pages behind a login** can't be checked automatically yet; HTTP checks and
   screenshots see the login page. The planner names what you must check by hand.
 - **"Before" means your main checkout as it is now**, uncommitted changes and
@@ -367,10 +395,11 @@ cause and `/retry`.
   Markdown subset; tables and links arrive as plain text.
 - **Opening a temporary vhost in your own browser** needs a hosts-file entry;
   devflow doesn't add one. Its own checks don't need it.
-- **Temporary vhosts** need devcrate (Windows). With the `none` provider, HTTP
-  checks and screenshots are skipped.
-- **Cost**: Claude runs on your Claude Code account. A `/ask` answer costs roughly
-  $0.30 on the default model; set `CLAUDE_MODEL` to spend less.
+- **Cost**: Claude runs on your Claude Code account, opencode on your provider.
+  Costs are the tools' own estimates; a subscription may report tokens only.
+  Set budgets ([Usage and limits](#usage-and-limits)) and `claude_model` to
+  spend less.
+- **One Telegram chat** is the only front end, and the only notifier.
 
 ## Project layout
 

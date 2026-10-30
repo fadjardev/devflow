@@ -43,10 +43,9 @@ known gap are still welcome.
 
 ## Supported versions
 
-devflow has not had a tagged release yet. Until v0.2, only the latest commit on
-`main` gets security fixes. After that:
-
 | Version | Supported |
 | --- | --- |
-| latest minor release | yes |
-| older releases | no |
+| 0.2.x | yes |
+| 0.1 (untagged, before the security hardening) | no |
+
+Only the latest minor release gets security fixes.
