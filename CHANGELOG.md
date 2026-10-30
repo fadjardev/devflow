@@ -27,6 +27,13 @@ things, and the changelog says how).
 - Per-project lint and test commands (`[checks]`), with a `php` preset that
   reproduces the old behaviour and adds pest.
 - The `devflow-checks` block is validated against a schema.
+- Token usage and cost per agent run, for Claude Code and opencode, in
+  `devflow.db`; `/usage` and `/limits`; a tokens/cost footer on gate messages
+  and `/ask` answers.
+- Budgets (`[budget]`: daily, monthly, per task; USD or tokens; per backend)
+  with threshold alerts sent once, and `on_exceed = warn | pause-new | stop`.
+- Provider usage and rate limits stop the task with the reset time;
+  `[limits] auto_resume` continues it after the reset.
 
 ### Changed
 
@@ -38,6 +45,10 @@ things, and the changelog says how).
   branch.
 - The vhost code moved behind a provider interface (`none`, `devcrate`).
 - The prompts ship inside the package (`devflow/prompts/`).
+- Claude runs with `--output-format stream-json`, which carries rate-limit
+  events.
+- A blocked task records why (`error`, `parked`, `budget`, `limit`) and when
+  it may resume.
 - **Breaking:** the worker's shell runs only the commands in
   `WORKER_SHELL_ALLOW` (default `php -l *`); git is always refused.
 - **Breaking:** Claude has no shell. It reads git through devflow-mcp's `git`
