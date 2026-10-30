@@ -53,6 +53,7 @@ module = [
     "devflow.platform",
     "devflow.projects",
     "devflow.redact",
+    "devflow.security",
     "devflow.sync",
     "devflow.tasks",
     "devflow.vault",

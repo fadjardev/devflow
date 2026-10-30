@@ -441,13 +441,11 @@ def test_verification_runs_without_our_secrets_in_its_environment(tmp_path, monk
 
 # -- S10: local files ----------------------------------------------------------------------
 
-@pending("S10")
 def test_note_locks_live_in_the_runtime_dir_not_the_shared_temp_dir():
     from devflow import vault
     assert vault.lock_dir().is_relative_to(config.RUNTIME_DIR)
 
 
-@pending("S10")
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows ACLs: test_windows_acl_*")
 def test_doctor_flags_a_secrets_file_other_users_can_read(tmp_path):
     from devflow import security
@@ -459,7 +457,6 @@ def test_doctor_flags_a_secrets_file_other_users_can_read(tmp_path):
     assert not security.loose_permissions(env)
 
 
-@pending("S10")
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
 def test_windows_acl_readable_by_everyone_is_flagged(tmp_path):
     from devflow import security

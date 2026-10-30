@@ -21,7 +21,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from . import redact
+from . import redact, security
 from .config import RUNTIME_DIR
 
 task_id: contextvars.ContextVar[str] = contextvars.ContextVar("devflow_task", default="-")
@@ -48,7 +48,7 @@ def path(name: str = "devflow", errors: bool = False) -> Path:
 def setup(name: str = "devflow", console: bool = True, rotate: bool = True) -> None:
     """Configure the root logger. `rotate=False` for processes that run several at once
     (the MCP server): Windows cannot rename a log another process holds open."""
-    RUNTIME_DIR.mkdir(exist_ok=True)
+    security.private_dir(RUNTIME_DIR)
 
     def file(p: Path, keep: int) -> logging.Handler:
         if rotate:

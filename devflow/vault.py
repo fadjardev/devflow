@@ -11,7 +11,6 @@ import contextlib
 import copy
 import os
 import re
-import tempfile
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -20,10 +19,17 @@ from typing import Any
 
 import yaml
 
+from .config import RUNTIME_DIR
+
 # Folders anything in devflow may write to, relative to the vault root.
 WRITABLE = ("05-Tasks", "04-Requests", "01-Projects")
 
-_LOCK_DIR = Path(tempfile.gettempdir()) / "devflow-locks"
+
+
+def lock_dir() -> Path:
+    """Note locks live in devflow's own runtime folder. In the shared temp folder another
+    local user could create or delete them (PRD SR11)."""
+    return RUNTIME_DIR / "locks"
 _FM = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?", re.S)
 _H2 = re.compile(r"^## (.+?)\s*$", re.M)
 
@@ -49,9 +55,9 @@ def safe_path(vault: Path, relative: str | Path) -> Path:
 
 @contextlib.contextmanager
 def locked(path: Path, timeout: float = 15.0) -> Iterator[None]:
-    _LOCK_DIR.mkdir(parents=True, exist_ok=True)
+    lock_dir().mkdir(parents=True, exist_ok=True)
     name = re.sub(r"[^A-Za-z0-9._-]", "_", str(path.resolve()))[-150:]
-    lock = _LOCK_DIR / f"{name}.lock"
+    lock = lock_dir() / f"{name}.lock"
     deadline = time.monotonic() + timeout
     while True:
         try:
