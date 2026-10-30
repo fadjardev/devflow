@@ -17,7 +17,7 @@ from pathlib import Path
 from string import Template
 from typing import Protocol
 
-from . import claude, logs, opencode, projects, sync, tasks, verify, vhost, worktree
+from . import claude, gitsafe, logs, opencode, projects, sync, tasks, verify, vhost, worktree
 from .config import PROMPTS_DIR, Settings
 from .tasks import TaskStore
 from .vault import VaultError
@@ -120,6 +120,21 @@ class Flow:
     def _project_dir(self, t: tasks.Task) -> Path:
         return projects.directory(self.s, t.project)
 
+    async def _check_git(self, t: tasks.Task, wt: Path) -> None:
+        """Refuse to go on if anything in .git that makes git run code changed since the
+        worktree was made: a hook, the config, attributes (PRD SR3)."""
+        baseline = t.meta.get("git_guard")
+        if not baseline:
+            log.warning("no .git fingerprint for this task (made before devflow checked); not compared")
+            return
+        changed = await asyncio.to_thread(gitsafe.changes, baseline, wt)
+        if changed:
+            log.error(".git changed during the task: %s", ", ".join(changed))
+            raise RuntimeError(
+                f"⚠️ .git was changed while the task ran: {', '.join(changed)}. Something may have "
+                f"planted code that git runs. devflow ran none of it. Inspect and restore these in the "
+                f"main checkout before /retry; the task can't be approved until they match again.")
+
     def _unsafe(self) -> str:
         """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""
         if not self.s.unsafe_shell:
@@ -160,6 +175,10 @@ class Flow:
             if t.meta.get("review_verdict") != "approve":
                 raise FlowError(f"{task_id} has no approving review yet")
             pdir, wt = self._project_dir(t), Path(t.meta["worktree"])
+            try:
+                await self._check_git(t, wt)
+            except RuntimeError as e:
+                raise FlowError(f"{task_id}: {e}") from None
             ref, fetched = await self._sync(pdir)
             clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)
             if not clean:
@@ -356,6 +375,7 @@ class Flow:
         branch = worktree.branch_name(kind, t.id, summary, self.s.branch_prefix,
                                       taken=lambda name: sync.branch_taken(self.s, pdir, name))
         wt = await asyncio.to_thread(worktree.create, self.s, pdir, t.id, branch, base)
+        guard = await asyncio.to_thread(gitsafe.fingerprint, wt)
         host, note = "", ""
         vh = projects.find_vhost(self.s, pdir)
         if vh:
@@ -367,7 +387,8 @@ class Flow:
         else:
             note = "\n⚠️ no devcrate vhost serves this project; HTTP checks will be skipped"
         self.store.transition(t.id, "coding", "bot", f"plan approved; base {ref} {base[:8]}", branch=branch,
-                              base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="")
+                              base=base, base_ref=ref, worktree=str(wt), vhost=host, bounces=0, review_verdict="",
+                              git_guard=guard)
         log.info("worktree %s on %s from %s @ %s, vhost %s", wt, branch, ref, base[:8], host or "-")
         self._spawn(t.id, self._work(t.id))
         return (f"🔨 {t.id} approved — worker started on `{branch}` from {ref} @ {base[:8]} ({fetched.note()})"
@@ -412,6 +433,7 @@ class Flow:
         message = commit_message or (
             (f"{head}: {summary}" if not fixup else f"{head}: address review of {task_id}") +
             f"\n\n- devflow task {task_id}")
+        await self._check_git(t, wt)
         sha = await asyncio.to_thread(worktree.commit, self.s, wt, message)
         log.info("commit %s", sha[:10] if sha else "(nothing changed)")
         if sha is None and not fixup:

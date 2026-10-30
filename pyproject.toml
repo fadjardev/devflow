@@ -47,6 +47,7 @@ module = [
     "devflow.claude",
     "devflow.config",
     "devflow.fmt",
+    "devflow.gitsafe",
     "devflow.logs",
     "devflow.projects",
     "devflow.sync",

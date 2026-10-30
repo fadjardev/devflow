@@ -105,18 +105,30 @@ class TamperingWorker(FakeOpencode):
         return reply
 
 
-@pending("S2")
-def test_planted_git_hooks_never_run_and_gate_2_refuses(setup):
+def test_planted_git_hooks_never_run_and_the_task_stops(setup):
     flow = setup[0]
     flow.oc = TamperingWorker()
+
+    t = asyncio.run(plan_and_code(flow))
+    assert not (Path(t.meta["worktree"]).parent / "hook-ran.txt").exists()
+    assert t.state == "blocked"
+    last = (t.note.section("History") or "").splitlines()[-1]
+    assert ".git/hooks/pre-commit" in last and ".git/config" in last
+    assert "changed" in flow.n.texts[-1]
+
+
+def test_gate_2_refuses_when_git_hooks_appeared_after_review(setup):
+    flow = setup[0]
     from devflow.pipeline import FlowError
 
     async def scenario():
         t = await plan_and_code(flow)
         assert t.state == "review"
-        assert not (Path(t.meta["worktree"]).parent / "hook-ran.txt").exists()
-        with pytest.raises(FlowError, match=r"(?i)\.git|hook"):
+        common = Path(g(t.meta["worktree"], "rev-parse", "--path-format=absolute", "--git-common-dir"))
+        (common / "hooks" / "post-checkout").write_text("#!/bin/sh\necho pwned\n")
+        with pytest.raises(FlowError, match="post-checkout"):
             await flow.approve(t.id)
+        assert flow.store.get(t.id).state == "review"
 
     asyncio.run(scenario())
 
@@ -164,7 +176,6 @@ def test_claude_gets_no_prefix_matched_git_rules():
         assert not [t for t in tools if t.startswith("Bash(")]
 
 
-@pending("S4")
 @pytest.mark.parametrize("args", [
     ["diff", "--no-index", ".env", "a.txt"],
     ["log", "-1", "--output=../outside.txt"],
@@ -185,6 +196,22 @@ def test_claude_git_tool_refuses_unsafe_forms(tmp_path, args):
     from devflow import gitsafe
     with pytest.raises(gitsafe.UnsafeGit):
         gitsafe.check_read_only(args, repo=tmp_path, deny_read=[".env"])
+
+
+@pytest.mark.parametrize("args", [
+    ["log", "--oneline", "-n", "20"],
+    ["log", "-5", "--stat", "origin/development..HEAD"],
+    ["show", "origin/development:app/models/User.php"],
+    ["diff", "abc123...HEAD"],
+    ["diff", "--stat", "HEAD~2", "--", "app/x.php"],
+    ["blame", "-L10,20", "app/x.php"],
+    ["status", "--short"],
+    ["log", "--format=%h %s", "--since=2.weeks"],
+])
+def test_claude_git_tool_allows_the_reading_it_needs(tmp_path, args):
+    from devflow import gitsafe
+    checked = gitsafe.check_read_only(args, repo=tmp_path, deny_read=[".env"])
+    assert [a for a in checked if a not in ("--no-ext-diff", "--no-textconv")] == args
 
 
 # -- S5: devflow-mcp scoping ---------------------------------------------------------------

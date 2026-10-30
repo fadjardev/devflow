@@ -10,6 +10,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
+from . import gitsafe
 from .config import Settings
 
 
@@ -17,15 +18,10 @@ class GitError(RuntimeError):
     pass
 
 
-# Unattended: a credential or editor prompt must fail fast, never wait for a human.
-_ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
-        "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"}
-
-
 def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
+    """git without hooks, fsmonitor or external diff drivers (see gitsafe), never prompting."""
     try:
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", env=_ENV, stdin=subprocess.DEVNULL, timeout=timeout)
+        return gitsafe.run(cwd, *args, timeout=timeout)
     except subprocess.TimeoutExpired:
         raise GitError(f"git {' '.join(args)}: timed out after {int(timeout)}s") from None
 
