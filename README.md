@@ -23,7 +23,8 @@ nothing.
 > **Status: early (pre-0.2).** devflow grew out of one developer's setup
 > (Windows, PHP apps behind a local nginx, an [Obsidian](https://obsidian.md)
 > vault) and is being generalised: it runs on Windows, Linux and macOS, with or
-> without a vault. Verification is still PHP-centric (see
+> without a vault, and runs each project's own lint and test commands.
+> Temporary sites for HTTP checks still need devcrate (see
 > [Known limits](#known-limits)). Issues and pull requests are welcome.
 
 ## Why
@@ -184,11 +185,22 @@ devflow collects evidence itself instead of trusting the worker's account:
   ````
 
   Fields: `path`, `method`, `expect_status`, `contains`, `absent`, `headers`,
-  `data`. Each check runs against the main checkout (**before**) and the task's
-  worktree (**after**); only "after" decides pass or fail.
-- **`php -l`** on every changed PHP file, with the PHP version the project's
-  vhost uses.
-- **phpunit**, when the project has `vendor/bin/phpunit` and a `phpunit.xml`.
+  `data`; the block is validated against a schema, and a malformed one fails
+  verification with the reason. Each check runs against the task's worktree
+  (**after**) and, for GET/HEAD/OPTIONS, the main checkout (**before**); only
+  "after" decides pass or fail. HTTP checks need a vhost provider.
+- **Lint and tests**: the commands in the project's `[checks]` (`lint`, `test`),
+  each with a timeout and a minimal environment. The `php` preset runs
+  **`php -l`** on every changed PHP file (with the site's PHP version) and
+  **phpunit** or **pest** when the project has them:
+
+  ```toml
+  [projects.shop.checks]
+  lint = ["npm run lint"]
+  test = ["npm test -- --run"]
+  ```
+
+  The planner is told which checks will run, so it asks for tests that will.
 - **Screenshot** of the first GET check, taken with headless Chromium (Playwright)
   and sent with the gate-2 message.
 - **Merge simulation** against the base branch with `git merge-tree`, plus a list
@@ -325,9 +337,6 @@ cause and `/retry`.
   Markdown subset; tables and links arrive as plain text.
 - **Opening a temporary vhost in your own browser** needs a hosts-file entry;
   devflow doesn't add one. Its own checks don't need it.
-- **Verification is PHP-centric**: lint is `php -l` and tests are phpunit/pest,
-  found through the devcrate vhost. Configurable check commands for other stacks
-  are planned for v0.2.
 - **Temporary vhosts** need devcrate (Windows). With the `none` provider, HTTP
   checks and screenshots are skipped.
 - **Cost**: Claude runs on your Claude Code account. A `/ask` answer costs roughly
@@ -352,7 +361,8 @@ cause and `/retry`.
 | `devflow/vhosts/` | Vhost providers: `none`, `devcrate` (a temporary nginx vhost per task) |
 | `devflow/platform.py` | Links, process trees and minimal environments per OS |
 | `devflow/redact.py`, `devflow/security.py` | Secret masking; owner-only file permissions |
-| `devflow/verify.py` | HTTP checks, `php -l`, phpunit, headless screenshot |
+| `devflow/verify.py` | HTTP checks, lint and tests, headless screenshot |
+| `devflow/checks/` | Per-project lint/test commands, the `php` preset, the `devflow-checks` schema |
 | `devflow/sync.py` | Fetch, base branch, other unmerged branches, merge simulation |
 | `devflow/fmt.py` | Agent Markdown → Telegram HTML, split without breaking code blocks |
 | `devflow/logs.py` | Logging setup behind the runtime `*.log` files and `/log` |
