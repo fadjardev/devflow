@@ -1,4 +1,9 @@
-"""Which project a name means, where it lives, and which devcrate vhost serves it."""
+"""Which project a name means and where it lives.
+
+With `devflow.toml` the projects are its `[projects.<name>]` registry. In legacy
+mode they are the vault's `01-Projects/<name>.md` notes, with the checkout at
+the note's `path:` (default PROJECTS_PATH/<name>).
+"""
 
 from __future__ import annotations
 
@@ -10,14 +15,16 @@ from .tasks import PROJECTS_DIR
 from .vault import VaultError
 
 
-def names(vault_root: Path) -> list[str]:
-    return sorted(p.stem for p in (vault_root / PROJECTS_DIR).glob("*.md"))
+def names(settings: Settings) -> list[str]:
+    if settings.registry is not None:
+        return sorted(settings.registry)
+    return sorted(p.stem for p in (settings.vault / PROJECTS_DIR).glob("*.md"))
 
 
-def resolve(vault_root: Path, query: str) -> str:
+def resolve(settings: Settings, query: str) -> str:
     """Exact name, else the one project whose name starts with / contains `query`."""
     q = query.strip().lower()
-    all_names = names(vault_root)
+    all_names = names(settings)
     for n in all_names:
         if n.lower() == q:
             return n
@@ -27,6 +34,8 @@ def resolve(vault_root: Path, query: str) -> str:
             return hits[0]
         if len(hits) > 1:
             raise VaultError(f"“{query}” matches more than one project:\n{_bullets(hits)}\n\nUse more of the name.")
+    if not all_names:
+        raise VaultError("No projects are configured yet. Add one under [projects] in devflow.toml.")
     raise VaultError(f"No project matches “{query}”. The projects are:\n{_bullets(all_names)}\n\n"
                      f"Any unique part of a name works, e.g. asm.")
 
@@ -36,10 +45,20 @@ def _bullets(items: list[str]) -> str:
 
 
 def checkout(settings: Settings, project: str) -> Path:
-    """The project's folder, from its note's `path` (default: PROJECTS_PATH/<name>)."""
-    note = vault.read(settings.vault / PROJECTS_DIR / f"{project}.md")
-    raw = (note.meta.get("path") or "").strip()
-    path = Path(raw) if raw else settings.projects / project
+    """The project's folder: its registry `path`, or (legacy) its note's `path`."""
+    if settings.registry is not None:
+        if project not in settings.registry:
+            raise VaultError(f"unknown project: {project}")
+        path = settings.registry[project].path
+    else:
+        note = vault.read(settings.vault / PROJECTS_DIR / f"{project}.md")
+        raw = (note.meta.get("path") or "").strip()
+        if raw:
+            path = Path(raw)
+        elif settings.projects is not None:
+            path = settings.projects / project
+        else:
+            raise VaultError(f"{project}: its note has no path:")
     if not path.is_dir():
         raise VaultError(f"{project}: {path} does not exist")
     return path

@@ -65,7 +65,7 @@ def mcp_config(settings: Settings, bind: Bind | None, cwd: Path) -> Path:
     folder = runtime_dir() / "mcp"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"claude-{uuid.uuid4().hex}.json"
-    env = {"DEVFLOW_VAULT": str(settings.vault), "DEVFLOW_CWD": str(cwd),
+    env = {"DEVFLOW_VAULT": str(settings.vault), "DEVFLOW_CWD": str(cwd), "DEVFLOW_RUNTIME": str(runtime_dir()),
            "DEVFLOW_DENY_READ": ",".join(settings.deny_read)}
     if bind:
         env |= {"DEVFLOW_ROLE": bind.role, "DEVFLOW_TASK": bind.task, "DEVFLOW_SCOPE": bind.scope}

@@ -77,7 +77,7 @@ def _title_parts(t: tasks.Task) -> tuple[str, str, str]:
 class Flow:
     def __init__(self, settings: Settings, notifier: Notifier):
         self.s = settings
-        self.store = TaskStore(settings.vault)
+        self.store = TaskStore(settings.vault, known=lambda p: p in projects.names(settings))
         self.n = notifier
         self.oc = opencode.Client(settings)
         self.jobs: dict[str, asyncio.Task] = {}
@@ -126,8 +126,12 @@ class Flow:
 
     def _project_dir(self, t: tasks.Task) -> Path:
         pdir = projects.directory(self.s, t.project)
-        redact.add_files(pdir, self.s.deny_read)  # an agent that prints a secret won't log it
+        redact.add_files(pdir, self._ps(t).deny_read)  # an agent that prints a secret won't log it
         return pdir
+
+    def _ps(self, t: tasks.Task | str) -> Settings:
+        """The settings for this task's project, its own overrides applied."""
+        return self.s.for_project(t if isinstance(t, str) else t.project)
 
     async def _check_git(self, t: tasks.Task, wt: Path) -> None:
         """Refuse to go on if anything in .git that makes git run code changed since the
@@ -164,10 +168,10 @@ class Flow:
             return ""
         return "\n\n⚠️ UNSAFE_SHELL is on: the worker could run any shell command except git."
 
-    async def _sync(self, pdir: Path) -> tuple[str, sync.Fetch]:
+    async def _sync(self, pdir: Path, t: tasks.Task) -> tuple[str, sync.Fetch]:
         """Fetch, then name the shared branch to build on (origin/development)."""
         fetched = await asyncio.to_thread(sync.fetch, self.s, pdir)
-        return await asyncio.to_thread(sync.base_ref, self.s, pdir), fetched
+        return await asyncio.to_thread(sync.base_ref, self._ps(t), pdir), fetched
 
     async def recover(self) -> None:
         """After a restart, tasks that were mid-phase have no job: park them."""
@@ -181,9 +185,12 @@ class Flow:
     # -- commands ----------------------------------------------------------
 
     async def new_task(self, project_query: str, text: str) -> tasks.Task:
-        project = projects.resolve(self.s.vault, project_query)
-        projects.directory(self.s, project)  # fail now, not inside the job
-        request = await asyncio.to_thread(tasks.create_request, self.s.vault, project, text)
+        project = projects.resolve(self.s, project_query)
+        pdir = projects.directory(self.s, project)  # fail now, not inside the job
+        if self.s.vault_is_own:
+            await asyncio.to_thread(tasks.ensure_project_note, self.s.vault, project, pdir)
+        request = await asyncio.to_thread(tasks.create_request, self.s.vault, project, text,
+                                          known=self.store.known)
         t = await asyncio.to_thread(self.store.create, project, text.strip().splitlines()[0], request, text)
         self._spawn(t.id, self._plan(t.id))
         return t
@@ -202,7 +209,7 @@ class Flow:
                 await self._check_git(t, wt)
             except RuntimeError as e:
                 raise FlowError(f"{task_id}: {e}") from None
-            ref, fetched = await self._sync(pdir)
+            ref, fetched = await self._sync(pdir, t)
             clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)
             if not clean:
                 raise FlowError(f"{task_id} no longer merges cleanly into {ref} ({fetched.note()}). "
@@ -272,7 +279,7 @@ class Flow:
         at_review = t.state == "review" or (t.state == "blocked" and t.meta.get("blocked_from") == "review")
         if not (at_review and t.meta.get("worktree")):
             raise FlowError(f"{task_id} is {t.state}; /refresh works on a task waiting at review")
-        ref, fetched = await self._sync(self._project_dir(t))
+        ref, fetched = await self._sync(self._project_dir(t), t)
         wt = Path(t.meta["worktree"])
         if worktree.run(wt, "merge-base", "--is-ancestor", ref, "HEAD").returncode == 0:
             raise FlowError(f"{task_id} already contains the latest {ref} ({fetched.note()})")
@@ -283,9 +290,11 @@ class Flow:
     def ask_target(self, query: str) -> Asked:
         """Where a question about `query` is answered from: one project, or all of them."""
         if query.lower() in ALL_PROJECTS:
-            return Asked("", self.s.projects, "all projects",
-                         f"It is about the projects under `{self.s.projects}` in general (any of them, or several).")
-        project = projects.resolve(self.s.vault, query)
+            where = ", ".join(f"`{projects.checkout(self.s, n)}`" for n in projects.names(self.s)
+                              if self.s.registry is not None) or f"`{self.s.projects}`"
+            return Asked("", self.s.projects or runtime_dir(), "all projects",
+                         f"It is about the projects in {where} in general (any of them, or several).")
+        project = projects.resolve(self.s, query)
         path = projects.checkout(self.s, project)
         return Asked("", path, project, f"It is about project `{project}`, checked out at `{path}` "
                                         f"(its vault note is `01-Projects/{project}.md`).")
@@ -298,12 +307,15 @@ class Flow:
         try:
             async with self.ask_slots:
                 log.info("question%s: %s", " (follow-up)" if target.session else "", question[:300])
-                scope = "*" if target.cwd == self.s.projects else target.label
+                scope = "*" if target.label == "all projects" else target.label
+                extra = tuple(self.s.registry[n].path for n in self.s.registry) \
+                    if scope == "*" and self.s.registry is not None else ()
                 notes = await asyncio.to_thread(self._notes, f"ask-{'all' if scope == '*' else scope}", scope)
                 prompt = question if target.session else _prompt(
                     "ask", scope=target.scope, vault=notes, question=question)
-                res = await claude.run(self.s, prompt, target.cwd, claude.ASKER_TOOLS, resume=target.session,
-                                       add_dirs=(notes,), timeout=ASK_TIMEOUT,
+                res = await claude.run(self.s if scope == "*" else self._ps(scope), prompt, target.cwd,
+                                       claude.ASKER_TOOLS, resume=target.session,
+                                       add_dirs=(notes, *extra), timeout=ASK_TIMEOUT,
                                        bind=claude.Bind("asker", scope=scope))
             if not res.ok:
                 raise RuntimeError(f"couldn't answer: {_clip(res.text, 500)}")
@@ -350,7 +362,7 @@ class Flow:
     async def _plan(self, task_id: str, feedback: str = "") -> None:
         t = self.store.get(task_id)
         pdir = self._project_dir(t)
-        ref, fetched = await self._sync(pdir)
+        ref, fetched = await self._sync(pdir, t)
         found = await asyncio.to_thread(sync.overlaps, self.s, pdir, ref)
         self.store.update(task_id, base_ref=ref)
         notes = await asyncio.to_thread(self._notes, task_id, t.project)
@@ -362,7 +374,7 @@ class Flow:
             overlaps=sync.describe(found) or "(none)",
         )
         await self.n.text(f"🧠 {task_id} planning…")
-        res = await claude.run(self.s, prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
+        res = await claude.run(self._ps(t), prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
                                resume=t.meta.get("claude_session", "") if feedback else "",
                                bind=claude.Bind("planner", task_id))
         if not res.ok:
@@ -400,14 +412,14 @@ class Flow:
         if clash:
             raise FlowError(f"{t.project} already has a worker ({clash[0]}); one per project")
         pdir = self._project_dir(t)
-        ref, fetched = await self._sync(pdir)
+        ref, fetched = await self._sync(pdir, t)
         base = await asyncio.to_thread(sync.sha, pdir, ref)
         kind, _, summary = _title_parts(t)
         branch = worktree.branch_name(kind, t.id, summary, self.s.branch_prefix,
                                       taken=lambda name: sync.branch_taken(self.s, pdir, name))
-        wt = await asyncio.to_thread(worktree.create, self.s, pdir, t.id, branch, base)
+        wt = await asyncio.to_thread(worktree.create, self._ps(t), pdir, t.id, branch, base)
         guard = await asyncio.to_thread(gitsafe.fingerprint, wt)
-        links = await asyncio.to_thread(lambda: worktree.snapshot(wt, worktree.linked_dirs(self.s, wt)))
+        links = await asyncio.to_thread(lambda: worktree.snapshot(wt, worktree.linked_dirs(self._ps(t), wt)))
         host, note = "", ""
         sites = vhosts.get(self.s)
         site = sites.find(pdir)
@@ -434,7 +446,8 @@ class Flow:
         t = self.store.get(task_id)
         wt = Path(t.meta["worktree"])
         await self.oc.ensure_server()
-        session = t.meta.get("opencode_session") or await self.oc.create_session(wt, f"devflow {task_id}")
+        session = t.meta.get("opencode_session") or await self.oc.create_session(
+            wt, f"devflow {task_id}", opencode.ruleset(self._ps(t)))
         self.store.update(task_id, opencode_session=session)
         prompt = _prompt("worker", task_id=task_id, project=t.project, branch=t.meta["branch"],
                          spec=t.note.section("Spec") or "",
@@ -472,7 +485,7 @@ class Flow:
             (f"{head}: {summary}" if not fixup else f"{head}: address review of {task_id}") +
             f"\n\n- devflow task {task_id}")
         await self._check_git(t, wt)
-        sha = await asyncio.to_thread(worktree.commit, self.s, wt, message)
+        sha = await asyncio.to_thread(worktree.commit, self._ps(t), wt, message)
         log.info("commit %s", sha[:10] if sha else "(nothing changed)")
         if sha is None and not fixup:
             raise RuntimeError("the worker changed nothing")
@@ -485,9 +498,9 @@ class Flow:
         site = vhosts.get(self.s).find(pdir)
         ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, site.php if site else None,
                               site.host if site else None, t.meta.get("vhost") or None,
-                              unsafe_before=self.s.before_unsafe_methods, env_allow=self.s.check_env_allow)
+                              unsafe_before=self.s.before_unsafe_methods, env_allow=self._ps(t).check_env_allow)
 
-        ref, fetched = await self._sync(pdir)
+        ref, fetched = await self._sync(pdir, t)
         clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)
         found = await asyncio.to_thread(sync.overlaps, self.s, pdir, ref, (t.meta["branch"],))
         touching = sync.describe(found, changed)
@@ -526,7 +539,7 @@ class Flow:
         self.store.update(task_id, base=new_base, base_ref=ref)
         message = f"chore(merge): merge {ref} into {branch}\n\n- devflow task {task_id}"
         if merge.returncode == 0:
-            await asyncio.to_thread(worktree.commit, self.s, wt, message)
+            await asyncio.to_thread(worktree.commit, self._ps(t), wt, message)
             await self.n.text(f"🔄 {task_id} merged {ref} cleanly; verifying again…")
             await self._verify_and_review(task_id)
             return
@@ -550,7 +563,7 @@ class Flow:
         await self.n.text(f"🔍 {task_id} reviewing (round {rnd})…")
         before = self.store.get(task_id).note.section("Review") or ""
         notes = await asyncio.to_thread(self._notes, task_id, t.project)
-        res = await claude.run(self.s, prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
+        res = await claude.run(self._ps(t), prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
                                bind=claude.Bind("reviewer", task_id))
         if not res.ok:
             raise RuntimeError(f"reviewer failed: {_clip(res.text, 500)}")
@@ -629,7 +642,7 @@ class Flow:
         notes = await asyncio.to_thread(self._notes, task_id, t.project)
         note_path = self.s.vault / tasks.PROJECTS_DIR / f"{t.project}.md"
         before = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
-        res = await claude.run(self.s, _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
+        res = await claude.run(self._ps(t), _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
                                pdir, claude.CLOSER_TOOLS, add_dirs=(notes,), timeout=600,
                                bind=claude.Bind("closer", task_id))
         if not res.ok:

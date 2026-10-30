@@ -84,8 +84,9 @@ class Devcrate:
 
     def find_vhost(self, project_dir: Path) -> Vhost | None:
         target = os.path.realpath(project_dir)
-        if not self.sites.is_dir():
+        if not self.sites.is_dir() or self.s.projects is None:  # its confs name projects/<folder>
             return None
+        projects = self.s.projects
         for conf in sorted(self.sites.glob("*.conf")):
             if conf.name.startswith("devflow-"):
                 continue
@@ -93,7 +94,7 @@ class Devcrate:
             root = _ROOT.search(text)
             if not root:
                 continue
-            if os.path.realpath(self.s.projects / root.group(1)) != target:
+            if os.path.realpath(projects / root.group(1)) != target:
                 continue
             name = _NAME.search(text)
             port = _PORT.search(text)

@@ -105,9 +105,10 @@ class Client:
         log.error("opencode serve did not answer on %s within 60s; see opencode-serve.log", self.base)
         raise OpencodeError(f"opencode serve did not come up on {self.base}")
 
-    async def create_session(self, directory: Path, title: str) -> str:
+    async def create_session(self, directory: Path, title: str, rules: list[dict[str, str]] | None = None) -> str:
+        """A session with the worker's permissions: `rules` (the project's), else the global ones."""
         r = await self.http.post("/session", params={"directory": str(directory)},
-                                 json={"title": title, "permission": ruleset(self.settings)})
+                                 json={"title": title, "permission": rules or ruleset(self.settings)})
         r.raise_for_status()
         return r.json()["id"]
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -72,10 +73,15 @@ def check_id(task_id: str) -> str:
     return task_id
 
 
-def check_project(vault_root: Path, project: str) -> str:
-    """A project is real only if `01-Projects/<project>.md` exists."""
+def check_name(project: str) -> str:
     if not PROJECT_RE.match(project or "") or ".." in project:
         raise VaultError(f"bad project name: {project!r}")
+    return project
+
+
+def check_project(vault_root: Path, project: str) -> str:
+    """A project note is real only if `01-Projects/<project>.md` exists."""
+    check_name(project)
     if not (vault_root / PROJECTS_DIR / f"{project}.md").is_file():
         raise VaultError(f"unknown project: {project} (no {PROJECTS_DIR}/{project}.md)")
     return project
@@ -104,8 +110,11 @@ class Task:
 
 
 class TaskStore:
-    def __init__(self, vault_root: Path):
+    def __init__(self, vault_root: Path, known: Callable[[str], bool] | None = None):
+        """Task notes under `vault_root`/05-Tasks. `known` says which projects exist (the
+        registry); without it a project needs a note in 01-Projects."""
         self.vault = vault_root
+        self.known = known
 
     # -- lookup ------------------------------------------------------------
 
@@ -141,7 +150,10 @@ class TaskStore:
     # -- writes ------------------------------------------------------------
 
     def create(self, project: str, title: str, request_link: str, request_text: str) -> Task:
-        check_project(self.vault, project)
+        if self.known is None:
+            check_project(self.vault, project)
+        elif not self.known(check_name(project)):
+            raise VaultError(f"unknown project: {project}")
         task_id = self.next_id()
         path = vault.safe_path(self.vault, f"{TASKS_DIR}/{project}/{task_id}.md")
         stamp = now()
@@ -273,9 +285,14 @@ def update_project_section(vault_root: Path, project: str, section: str, text: s
     return path
 
 
-def create_request(vault_root: Path, project: str, text: str, today: dt.date | None = None) -> str:
-    """Log a raw request verbatim per Conventions; returns the note's link title."""
-    check_project(vault_root, project)
+def create_request(vault_root: Path, project: str, text: str, today: dt.date | None = None,
+                   known: Callable[[str], bool] | None = None) -> str:
+    """Log a raw request verbatim per Conventions; returns the note's link title. `known` says
+    which projects exist (the registry); without it a project needs a note in 01-Projects."""
+    if known is None:
+        check_project(vault_root, project)
+    elif not known(check_name(project)):
+        raise VaultError(f"unknown project: {project}")
     day = (today or dt.date.today()).isoformat()
     base = f"Request {project} {day}"
     title, n = base, 1
@@ -293,7 +310,7 @@ def copy_view(vault_root: Path, dest: Path, project: str) -> Path:
     notes and their task notes, in the vault's layout. Claude gets this folder instead of the
     whole vault, which may hold anything (PRD SR13). Refreshed on every run."""
     wanted = [f"{PROJECTS_DIR}/*.md", f"{TASKS_DIR}/*/*.md"] if project == "*" else \
-        [f"{PROJECTS_DIR}/{check_project(vault_root, project)}.md", f"{TASKS_DIR}/{project}/*.md"]
+        [f"{PROJECTS_DIR}/{check_name(project)}.md", f"{TASKS_DIR}/{project}/*.md"]
     keep = set()
     for pattern in wanted:
         for src in vault_root.glob(pattern):
@@ -306,3 +323,15 @@ def copy_view(vault_root: Path, dest: Path, project: str) -> Path:
         old.unlink()
     dest.mkdir(parents=True, exist_ok=True)
     return dest
+
+
+def ensure_project_note(vault_root: Path, project: str, path: Path) -> Path:
+    """devflow's own notes folder (no vault configured) gets a project note on first use, so
+    the closer has somewhere to record decisions."""
+    note = vault.safe_path(vault_root, f"{PROJECTS_DIR}/{check_name(project)}.md")
+    if not note.exists():
+        with vault.locked(note):
+            if not note.exists():
+                vault.write(note, Note({"title": project, "type": "project", "path": str(path)},
+                                       f"\n# {project}\n\n## Decisions\n"))
+    return note
