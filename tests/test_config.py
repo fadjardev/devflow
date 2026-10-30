@@ -196,3 +196,17 @@ def test_an_empty_base_branch_means_the_remotes_default(tmp_path):
 def test_the_example_config_loads():
     s = config.from_toml(config.REPO_ROOT / "devflow.example.toml")
     assert s.registry is not None and "shop" in s.registry and s.vhost_provider == "none"
+
+
+def test_doctor_checks_the_config_file_it_read(tmp_path, monkeypatch, capsys):
+    repo = tmp_path / "app"
+    repo.mkdir()
+    g(repo, "init", "-q")
+    f = tmp_path / "devflow.toml"
+    f.write_text(f'[telegram]\nchat_id = 1\n[projects.app]\npath = "{repo.as_posix()}"\n', encoding="utf-8")
+    monkeypatch.setenv("DEVFLOW_CONFIG", str(f))
+    with pytest.raises(SystemExit):
+        cli.main(["doctor"])
+    out = capsys.readouterr().out
+    assert f"settings: {f}" in out and "config file private" in out and ".env private" not in out
+    assert "ok   app:" in out
