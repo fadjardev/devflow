@@ -15,10 +15,13 @@ import logging
 import shutil
 import sys
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from . import usage
 from .config import Settings, runtime_dir
+from .usage import Limit, Usage
 
 log = logging.getLogger("devflow.claude")
 
@@ -57,6 +60,32 @@ class Result:
     session_id: str
     ok: bool
     cost_usd: float = 0.0
+    usage: Usage = field(default_factory=Usage)  # the session's totals as Claude Code reports them
+    limit: Limit | None = None                   # a usage/rate limit refused or warned about this run
+
+
+def parse_stream(raw: str) -> tuple[dict[str, Any], list[dict[str, Any]], list[str]]:
+    """stream-json output: the final `result` message, every `rate_limit_event`, and the
+    `error` of any assistant message. A single JSON object (`--output-format json`) also works."""
+    result: dict[str, Any] = {}
+    events: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        kind = msg.get("type")
+        if kind == "result":
+            result = msg
+        elif kind == "rate_limit_event":
+            events.append(msg)
+        elif kind == "assistant" and isinstance(msg.get("error"), str):
+            errors.append(msg["error"])
+    return result, events, errors
 
 
 def mcp_config(settings: Settings, bind: Bind | None, cwd: Path) -> Path:
@@ -94,7 +123,8 @@ async def run(settings: Settings, prompt: str, cwd: Path, tools: list[str],
 
 async def _run(settings: Settings, exe: str, config: Path, prompt: str, cwd: Path, tools: list[str],
                resume: str, add_dirs: tuple[Path, ...], timeout: float) -> Result:
-    args = [exe, "-p", "--output-format", "json", "--permission-mode", "dontAsk",
+    # stream-json, not json: only the stream carries rate_limit_event (reset time, utilization).
+    args = [exe, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
             "--mcp-config", str(config),
             "--allowedTools", *tools, "--disallowedTools", *NEVER, *secret_rules(settings)]
     for d in add_dirs:
@@ -118,12 +148,12 @@ async def _run(settings: Settings, exe: str, config: Path, prompt: str, cwd: Pat
         proc.kill()
         raise
     raw = out.decode("utf-8", "replace").strip()
-    try:
-        data = json.loads(raw.splitlines()[-1]) if raw else {}
-    except json.JSONDecodeError:
+    data, events, errors = parse_stream(raw)
+    limit = usage.claude_limit(data, events, errors)
+    if not data:
         log.error("claude -p exit %s, no JSON result. stdout: %s | stderr: %s",
                   proc.returncode, raw[-800:], err.decode("utf-8", "replace").strip()[-800:])
-        return Result(raw or err.decode("utf-8", "replace"), "", False)
+        return Result(raw[-2000:] or err.decode("utf-8", "replace"), "", False, limit=limit)
     if proc.returncode != 0 or data.get("is_error"):
         log.error("claude -p failed (exit %s, %s): %s | stderr: %s", proc.returncode, data.get("subtype", "?"),
                   str(data.get("result", ""))[:800], err.decode("utf-8", "replace").strip()[-800:])
@@ -132,4 +162,6 @@ async def _run(settings: Settings, exe: str, config: Path, prompt: str, cwd: Pat
         session_id=str(data.get("session_id", "")),
         ok=proc.returncode == 0 and not data.get("is_error", False),
         cost_usd=float(data.get("total_cost_usd") or 0),
+        usage=usage.claude_usage(data),
+        limit=limit,
     )

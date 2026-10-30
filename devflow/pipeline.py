@@ -9,17 +9,21 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import datetime as dt
 import logging
 import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
-from typing import Protocol
+from typing import Any, Protocol
 
 from . import checks, claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhosts, worktree
 from .config import Settings, prompts_dir, runtime_dir
 from .tasks import TaskStore
+from .usage import guard
+from .usage.db import UsageDB
+from .usage.guard import Spending, Stopped
 from .vault import VaultError
 
 log = logging.getLogger("devflow")
@@ -80,6 +84,7 @@ class Flow:
         self.store = TaskStore(settings.vault, known=lambda p: p in projects.names(settings))
         self.n = notifier
         self.oc = opencode.Client(settings)
+        self.spend = Spending(settings.budget, UsageDB(), self.notify)
         self.jobs: dict[str, asyncio.Task] = {}
         self.ask_slots = asyncio.Semaphore(ASK_SLOTS)
 
@@ -101,13 +106,23 @@ class Flow:
         except asyncio.CancelledError:
             log.info("%s cancelled after %.0fs", phase, time.monotonic() - started)
             raise
+        except Stopped as e:  # a budget or provider limit: not an error, a pause
+            log.warning("%s stopped (%s): %s", phase, e.reason, e)
+            try:
+                if self.store.get(task_id).state in ("new", "planned", "coding", "review"):
+                    self.store.transition(task_id, "blocked", "bot", f"{e.reason}: {e}", blocked_reason=e.reason,
+                                          resume_after=e.resume_after.isoformat() if e.resume_after else "")
+            except Exception:
+                log.exception("could not mark %s blocked", task_id)
+            await self.notify(f"⏸ {task_id} paused before {phase.lstrip('_')}: {e}\n/retry {task_id} · /limits")
         except Exception as e:  # any failure parks the task where a human can see it
             log.exception("%s failed after %.0fs", phase, time.monotonic() - started)
             state = "?"
             try:
                 state = self.store.get(task_id).state
                 if state in ("new", "planned", "coding", "review"):
-                    self.store.transition(task_id, "blocked", "bot", f"{type(e).__name__}: {e}")
+                    self.store.transition(task_id, "blocked", "bot", f"{type(e).__name__}: {e}",
+                                          blocked_reason="error", resume_after="")
                     state = "blocked"
             except Exception:
                 log.exception("could not mark %s blocked", task_id)
@@ -162,6 +177,17 @@ class Flow:
         """The notes Claude may read for this run: a copy of the project's notes, not the vault."""
         return tasks.copy_view(self.s.vault, runtime_dir() / "notes" / name, project)
 
+    async def _claude(self, task: str, role: str, settings: Settings, prompt: str, cwd: Path, tools: list[str],
+                      **kw: Any) -> claude.Result:
+        """claude.run, between the budget/limit checks and the usage record (PRD §5.7)."""
+        t = self.store.get(task) if tasks.ID_RE.match(task) else None
+        self.spend.before("claude", t.id if t else None, int(t.meta.get("budget_rounds") or 0) if t else 0)
+        started = time.monotonic()
+        res = await claude.run(settings, prompt, cwd, tools, **kw)
+        await self.spend.after(task, role, "claude", res.session_id, res.usage, time.monotonic() - started,
+                               res.ok, res.limit)
+        return res
+
     def _unsafe(self) -> str:
         """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""
         if not self.s.unsafe_shell:
@@ -178,13 +204,17 @@ class Flow:
         for t in self.store.active():
             mid_phase = t.state in ("new", "coding") or (t.state == "review" and t.meta.get("review_verdict") != "approve")
             if mid_phase and t.id not in self.jobs:
-                self.store.transition(t.id, "blocked", "bot", "bot restarted mid-phase")
+                self.store.transition(t.id, "blocked", "bot", "bot restarted mid-phase", blocked_reason="parked",
+                                      resume_after="")
                 log.warning("%s was mid-%s at startup; parked as blocked", t.id, t.state)
                 await self.n.text(f"⚠️ {t.id} was mid-{t.state} when the bot stopped. /retry {t.id}")
 
     # -- commands ----------------------------------------------------------
 
     async def new_task(self, project_query: str, text: str) -> tasks.Task:
+        refused = self.spend.refuse_new()
+        if refused:
+            raise FlowError(refused)
         project = projects.resolve(self.s, project_query)
         pdir = projects.directory(self.s, project)  # fail now, not inside the job
         if self.s.vault_is_own:
@@ -260,8 +290,11 @@ class Flow:
             return f"🔁 {task_id} finishing the close."
         if t.state != "blocked":
             raise FlowError(f"{task_id} is {t.state}, not blocked")
+        extra: dict[str, Any] = {"blocked_reason": "", "resume_after": ""}
+        if t.meta.get("blocked_reason") == "budget":
+            extra["budget_rounds"] = int(t.meta.get("budget_rounds") or 0) + 1  # one more cap's worth
         to = t.meta.get("blocked_from") or "new"
-        self.store.transition(task_id, to, "bot", "retry")
+        self.store.transition(task_id, to, "bot", "retry", **extra)
         if to == "new":
             self._spawn(task_id, self._plan(task_id))
         elif to == "coding":
@@ -270,6 +303,23 @@ class Flow:
             evidence = self.store.get(task_id).note.section("Verification") or "(none)"
             self._spawn(task_id, self._review(task_id, _clip(evidence, 3000), None))
         return f"🔁 {task_id} resumed at {to}."
+
+    async def resume_due(self) -> list[str]:
+        """Tasks a provider limit stopped, resumed once the limit has reset (limits.auto_resume)."""
+        self.spend.due()
+        now = self.spend.now()
+        resumed = []
+        for t in self.store.active():
+            after = t.meta.get("resume_after") or ""
+            if t.state != "blocked" or t.meta.get("blocked_reason") != "limit" or not after or t.id in self.jobs:
+                continue
+            if dt.datetime.fromisoformat(after) > now or self.spend.active_limit("claude"):
+                continue
+            await self.retry(t.id)
+            resumed.append(t.id)
+        if resumed:
+            await self.notify(f"▶️ the limit has reset; resumed {', '.join(resumed)}")
+        return resumed
 
     async def refresh(self, task_id: str) -> str:
         """Bring the task branch up to date with the shared branch, then verify and review again."""
@@ -303,6 +353,9 @@ class Flow:
         """Answer a question read-only. Pass a previous answer's `Asked` (session set) to follow up."""
         if not question.strip():
             raise FlowError("usage: /ask <project|all> <question>")
+        refused = self.spend.refuse_new()
+        if refused:
+            raise FlowError(refused)
         token = logs.task_id.set(f"ask:{target.label}")
         try:
             async with self.ask_slots:
@@ -313,15 +366,17 @@ class Flow:
                 notes = await asyncio.to_thread(self._notes, f"ask-{'all' if scope == '*' else scope}", scope)
                 prompt = question if target.session else _prompt(
                     "ask", scope=target.scope, vault=notes, question=question)
-                res = await claude.run(self.s if scope == "*" else self._ps(scope), prompt, target.cwd,
-                                       claude.ASKER_TOOLS, resume=target.session,
+                res = await self._claude(f"ask:{target.label}", "asker", self.s if scope == "*" else self._ps(scope),
+                                         prompt, target.cwd, claude.ASKER_TOOLS, resume=target.session,
                                        add_dirs=(notes, *extra), timeout=ASK_TIMEOUT,
                                        bind=claude.Bind("asker", scope=scope))
             if not res.ok:
                 raise RuntimeError(f"couldn't answer: {_clip(res.text, 500)}")
             log.info("answered (%d chars, $%.2f)", len(res.text), res.cost_usd)
             follow = dataclasses.replace(target, session=res.session_id or target.session)
-            footer = f"_{target.label} · ${res.cost_usd:.2f} · reply to this message to follow up_"
+            spent = (f"{guard.tokens(res.usage.tokens)} tokens · {guard.money(res.cost_usd)}" if res.usage.tokens
+                     else f"${res.cost_usd:.2f}")
+            footer = f"_{target.label} · {spent} · reply to this message to follow up_"
             return f"{res.text.strip()}\n\n{footer}", follow
         finally:
             logs.task_id.reset(token)
@@ -379,7 +434,7 @@ class Flow:
                   "they document what to check by hand"),
         )
         await self.n.text(f"🧠 {task_id} planning…")
-        res = await claude.run(self._ps(t), prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
+        res = await self._claude(task_id, "planner", self._ps(t), prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
                                resume=t.meta.get("claude_session", "") if feedback else "",
                                bind=claude.Bind("planner", task_id))
         if not res.ok:
@@ -405,7 +460,7 @@ class Flow:
         stale = "" if fetched.ok else f"\n\n{fetched.note()}"
         await self.n.text(
             f"📋 {task_id} planned — {t.meta.get('title_line') or t.meta.get('title')}\n\n"
-            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}{self._unsafe()}\n\n"
+            f"{_clip(t.note.section('Spec') or '', 2500)}{warn}{stale}{self._unsafe()}{self.spend.footer(task_id)}\n\n"
             f"/approve {task_id} · /reject {task_id} <why> · /show {task_id}"
         )
 
@@ -465,7 +520,17 @@ class Flow:
             await self.n.text(f"🚫 {task_id} worker asked for `{what}` — rejected (unattended policy)")
 
         log.info("worker prompt sent (session %s, %s)", session, "fix-up" if fixup else "first pass")
-        reply = await self.oc.prompt(session, wt, prompt, WORKER_TIMEOUT, on_denied=denied)
+        self.spend.before("opencode", task_id, int(t.meta.get("budget_rounds") or 0))
+        before, started = await self.oc.session_usage(session, wt), time.monotonic()
+        try:
+            reply = await self.oc.prompt(session, wt, prompt, WORKER_TIMEOUT, on_denied=denied)
+        except opencode.OpencodeLimit as e:
+            await self.spend.after(task_id, "worker", "opencode", "",
+                                   await self.oc.session_usage(session, wt) - before,
+                                   time.monotonic() - started, False, e.limit)
+            raise
+        await self.spend.after(task_id, "worker", "opencode", "", await self.oc.session_usage(session, wt) - before,
+                               time.monotonic() - started, True, None)
         log.info("worker replied (%d chars)", len(reply))
 
         t = self.store.get(task_id)
@@ -569,7 +634,7 @@ class Flow:
         await self.n.text(f"🔍 {task_id} reviewing (round {rnd})…")
         before = self.store.get(task_id).note.section("Review") or ""
         notes = await asyncio.to_thread(self._notes, task_id, t.project)
-        res = await claude.run(self._ps(t), prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
+        res = await self._claude(task_id, "reviewer", self._ps(t), prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
                                bind=claude.Bind("reviewer", task_id))
         if not res.ok:
             raise RuntimeError(f"reviewer failed: {_clip(res.text, 500)}")
@@ -585,7 +650,8 @@ class Flow:
             stat = await asyncio.to_thread(worktree.diff, wt, t.meta["base"], True)
             caption = (f"✅ {task_id} reviewed and ready — {t.meta.get('title_line') or t.meta.get('title')}\n"
                        f"branch `{t.meta['branch']}`" + (f" · https://{t.meta['vhost']}" if t.meta.get("vhost") else "") +
-                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}{self._unsafe()}\n\n"
+                       f"\n\n{_clip(stat, 1200)}\n\n{_clip(evidence, 1200)}{self._unsafe()}"
+                       f"{self.spend.footer(task_id)}\n\n"
                        f"/approve {task_id} · /reject {task_id} <why> · /diff {task_id}")
             await self.n.text(caption)
             if shot:
@@ -648,8 +714,9 @@ class Flow:
         notes = await asyncio.to_thread(self._notes, task_id, t.project)
         note_path = self.s.vault / tasks.PROJECTS_DIR / f"{t.project}.md"
         before = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
-        res = await claude.run(self._ps(t), _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
-                               pdir, claude.CLOSER_TOOLS, add_dirs=(notes,), timeout=600,
+        res = await self._claude(task_id, "closer", self._ps(t),
+                                 _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
+                                 pdir, claude.CLOSER_TOOLS, add_dirs=(notes,), timeout=600,
                                bind=claude.Bind("closer", task_id))
         if not res.ok:
             log.error("closer failed: %s", _clip(res.text, 500))

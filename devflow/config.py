@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import tomllib
+import zoneinfo
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,33 @@ class CheckConfig:
 
 
 @dataclass(frozen=True)
+class Caps:
+    """Spending caps for one window; None = no cap."""
+    daily_usd: float | None = None
+    monthly_usd: float | None = None
+    per_task_usd: float | None = None
+    daily_tokens: int | None = None
+    monthly_tokens: int | None = None
+
+    def any(self) -> bool:
+        return any(v is not None for v in dataclasses.astuple(self))
+
+
+ON_EXCEED = ("warn", "pause-new", "stop")
+
+
+@dataclass(frozen=True)
+class BudgetConfig:
+    """User budgets and provider-limit handling (PRD §5.7)."""
+    caps: Caps = field(default_factory=Caps)
+    backends: dict[str, Caps] = field(default_factory=dict)  # claude, opencode: their own caps
+    warn_at: list[float] = field(default_factory=lambda: [0.5, 0.8])
+    on_exceed: str = "warn"   # warn | pause-new | stop
+    timezone: str = ""        # IANA name; "" = this machine's
+    auto_resume: bool = False  # resume tasks a provider limit stopped once it resets
+
+
+@dataclass(frozen=True)
 class Project:
     """One `[projects.<name>]` entry. Unset overrides fall back to the global setting."""
     name: str
@@ -111,6 +139,7 @@ class Settings:
     check_env_allow: list[str] = field(default_factory=list)  # env vars lint/test commands may see
     share_code_via_telegram: bool = True  # False: /diff sends a summary and a local path instead
     checks: CheckConfig = field(default_factory=lambda: CheckConfig(preset="php"))
+    budget: BudgetConfig = field(default_factory=BudgetConfig)
     registry: dict[str, Project] | None = None  # None: the projects are the vault's notes (legacy)
     vault_is_own: bool = False  # no vault configured: notes live in the runtime folder
     source: str = ""  # where these settings came from, for doctor
@@ -200,6 +229,14 @@ class _Table:
     def flag(self, key: str, default: bool) -> bool:
         return bool(self._get(key, bool, default))
 
+    def real(self, key: str) -> float | None:
+        value = self._get(key, (int, float), None)
+        return None if value is None else float(value)
+
+    def maybe_number(self, key: str) -> int | None:
+        value = self._get(key, int, None)
+        return None if value is None else int(value)
+
     def texts(self, key: str, default: list[str] | None) -> list[str] | None:
         value = self._get(key, list, default)
         if value is not None and not all(isinstance(v, str) for v in value):
@@ -233,6 +270,42 @@ def _checks(table: _Table) -> CheckConfig:
                       timeout=table.number("timeout", 600))
     table.done()
     return cfg
+
+
+def _caps(t: _Table) -> Caps:
+    return Caps(daily_usd=t.real("daily_usd"), monthly_usd=t.real("monthly_usd"), per_task_usd=t.real("per_task_usd"),
+                daily_tokens=t.maybe_number("daily_tokens"), monthly_tokens=t.maybe_number("monthly_tokens"))
+
+
+def _budget(top: _Table) -> BudgetConfig:
+    b = top.table("budget")
+    caps = _caps(b)
+    backends = {}
+    per = b.table("backend")
+    for name in list(per.data):
+        if name not in ("claude", "opencode"):
+            raise ConfigError(f"budget.backend.{name}: the backends are claude and opencode")
+        t = per.table(name)
+        backends[name] = _caps(t)
+        t.done()
+    per.done()
+    warn_at = b._get("warn_at", list, [0.5, 0.8])
+    if not all(isinstance(w, int | float) and 0 < w < 1 for w in warn_at):
+        raise ConfigError("budget.warn_at must be fractions between 0 and 1, e.g. [0.5, 0.8]")
+    on_exceed = b.text("on_exceed", "warn")
+    if on_exceed not in ON_EXCEED:
+        raise ConfigError(f"budget.on_exceed must be one of {', '.join(ON_EXCEED)}, not {on_exceed!r}")
+    tz = b.text("timezone")
+    if tz:
+        try:
+            zoneinfo.ZoneInfo(tz)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            raise ConfigError(f"budget.timezone: unknown time zone {tz!r}") from None
+    b.done()
+    lim = top.table("limits")
+    auto = lim.flag("auto_resume", False)
+    lim.done()
+    return BudgetConfig(caps, backends, sorted(float(w) for w in warn_at), on_exceed, tz, auto)
 
 
 def from_toml(path: Path) -> Settings:
@@ -316,6 +389,7 @@ def from_toml(path: Path) -> Settings:
         check_env_allow=safety.texts("check_env_allow", []) or [],
         share_code_via_telegram=safety.flag("share_code_via_telegram", True),
         checks=_checks(top.table("checks")),
+        budget=_budget(top),
         registry=registry,
         source=str(path),
     )

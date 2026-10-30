@@ -1,0 +1,9 @@
+[
+  {"info": {"id": "msg_u1", "role": "user", "sessionID": "ses_1"}, "parts": []},
+  {"info": {"id": "msg_a1", "role": "assistant", "sessionID": "ses_1", "providerID": "openrouter", "modelID": "qwen/qwen3-coder",
+            "cost": 0.0125, "tokens": {"input": 12000, "output": 800, "reasoning": 200, "cache": {"read": 30000, "write": 1500}}},
+   "parts": [{"type": "text", "text": "editing"}]},
+  {"info": {"id": "msg_a2", "role": "assistant", "sessionID": "ses_1", "providerID": "openrouter", "modelID": "qwen/qwen3-coder",
+            "cost": 0.0075, "tokens": {"input": 3000, "output": 400, "reasoning": 0, "cache": {"read": 42000, "write": 0}}},
+   "parts": [{"type": "text", "text": "done"}]}
+]

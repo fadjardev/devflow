@@ -1,0 +1,2 @@
+{"name": "APIError", "data": {"message": "Rate limit exceeded: free-models-per-day", "statusCode": 429, "isRetryable": false,
+                              "responseHeaders": {"Retry-After": "3600"}}}
