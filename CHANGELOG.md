@@ -14,14 +14,39 @@ things, and the changelog says how).
 - `LICENSE` (MIT), `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`,
   issue and pull request templates.
 
+- Security scanning in CI (gitleaks, pip-audit, Semgrep) and Dependabot.
+- `ALLOWED_USER_IDS`, `WORKER_SHELL_ALLOW`, `UNSAFE_SHELL`, `CHECK_ENV_ALLOW`,
+  `BEFORE_UNSAFE_METHODS` and `SHARE_CODE_VIA_TELEGRAM` settings.
+- `python -m devflow doctor --fix` makes `.env` and the runtime folder private.
+- [docs/security.md](docs/security.md): what is enforced and what isn't.
+
 ### Changed
 
 - Python 3.11 or newer is required (was 3.10).
-- The README states what the safety model enforces and what it doesn't yet.
+- **Breaking:** the worker's shell runs only the commands in
+  `WORKER_SHELL_ALLOW` (default `php -l *`); git is always refused.
+- **Breaking:** Claude has no shell. It reads git through devflow-mcp's `git`
+  tool. Custom prompts that ran git in a shell must use the tool.
+- **Breaking:** the worker gets no devflow-mcp. It gives up by ending its reply
+  with `BLOCKED: <why>`; its reply is the worker log.
+- Each Claude run's devflow-mcp is bound to its own task and role. The spec
+  can't change after gate 1; project notes are closer-only and append-only,
+  and the close message shows what was added.
+- Claude reads a copy of the project's notes instead of the whole vault.
+- devflow refuses to start for a group chat without `ALLOWED_USER_IDS`.
+- Logs and Telegram messages mask secrets.
+- Lint and test commands run with a minimal environment.
+- POST/PUT/DELETE checks no longer run against your own checkout by default.
+- Note locks moved from the temp folder into the runtime folder.
 
 ### Fixed
 
 - Removing a worktree with a linked folder failed on Python 3.11.
+- Security review findings S1-S10 and S12 (PRD §7.2): agents could run any
+  shell command, plant git hooks that ran on the next commit, write through
+  linked folders unnoticed, write files with `git log --output`, write other
+  tasks' notes and the approved spec, aim HTTP checks at other hosts, and see
+  secrets in logs; group members could command the bot.
 
 ## 0.1.0
 

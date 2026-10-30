@@ -217,9 +217,9 @@ is intended to stay identical.
    Prompts change accordingly.
 8. Gate 2 refuses `/approve` if anything under the worktree's `.git` changed
    (hooks, config). The task blocks with reason `tamper` (SR3).
-9. Linked folders (`vendor`, …) are no longer write-through: they are copied
-   (default for small folders) or junctioned with an mtime/hash snapshot that
-   gate 2 checks; a write-through shows as a red flag (SR4).
+9. Writes inside linked folders (`vendor`, …) are detected: each is
+   snapshotted when the worktree is made, and a change stops the task before
+   the commit and at gate 2 (SR4, [ADR 0005](adr/0005-linked-folders-detected-not-copied.md)).
 10. HTTP checks: a `path` that isn't a relative URL starting with `/` is
     rejected as an invalid check. Non-GET checks run only against "after" by
     default (SR7). "Before" results for POST/PUT/DELETE disappear from the
@@ -283,7 +283,7 @@ is intended to stay identical.
 | 0002 | Config: TOML + legacy `.env` mode; registry is the project authority |
 | 0003 | Worker gets no devflow-mcp; Worker log and `BLOCKED:` come from its reply |
 | 0004 | S4 reproduced against the real `claude` CLI; Claude reads git through a checked tool |
-| 0005 | Linked folders: copy vs. junction + snapshot |
+| 0005 | Linked folders are watched (snapshot), not copied |
 | 0006 | Usage storage in SQLite before tasks move there (v0.3) |
 | 0007 | Claude Code limit/reset fields: what the CLI documents and outputs |
 | 0008 | Platform dirs via `platformdirs` |
