@@ -44,6 +44,7 @@ class Settings:
     worker_shell_allow: list[str] = field(default_factory=list)
     unsafe_shell: bool = False  # allow every shell command except git; see docs/security.md
     before_unsafe_methods: bool = False  # run POST/PUT/DELETE checks against your checkout too
+    share_code_via_telegram: bool = True  # False: /diff sends a summary and a local path instead
 
     @property
     def worktrees(self) -> Path:
@@ -78,4 +79,5 @@ def load() -> Settings:
         worker_shell_allow=_list(env("WORKER_SHELL_ALLOW", "php -l *")),
         unsafe_shell=_bool(env("UNSAFE_SHELL", "")),
         before_unsafe_methods=_bool(env("BEFORE_UNSAFE_METHODS", "")),
+        share_code_via_telegram=_bool(env("SHARE_CODE_VIA_TELEGRAM", "true")),
     )

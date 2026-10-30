@@ -51,6 +51,7 @@ module = [
     "devflow.logs",
     "devflow.mcp_server",
     "devflow.projects",
+    "devflow.redact",
     "devflow.sync",
     "devflow.tasks",
     "devflow.vault",

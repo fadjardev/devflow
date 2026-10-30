@@ -21,6 +21,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+from . import redact
 from .config import RUNTIME_DIR
 
 task_id: contextvars.ContextVar[str] = contextvars.ContextVar("devflow_task", default="-")
@@ -59,7 +60,8 @@ def setup(name: str = "devflow", console: bool = True, rotate: bool = True) -> N
     handlers = [file(path(name), 5), errors]
     if console:
         handlers.append(logging.StreamHandler(sys.stderr))
-    fmt, tag = logging.Formatter(FORMAT), _TaskTag()
+    redact.add_env()
+    fmt, tag = redact.Formatter(FORMAT), _TaskTag()
     for h in handlers:
         h.setFormatter(fmt)
         h.addFilter(tag)

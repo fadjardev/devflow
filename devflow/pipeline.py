@@ -17,7 +17,7 @@ from pathlib import Path
 from string import Template
 from typing import Protocol
 
-from . import claude, gitsafe, logs, opencode, projects, sync, tasks, verify, vhost, worktree
+from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhost, worktree
 from .config import PROMPTS_DIR, RUNTIME_DIR, Settings
 from .tasks import TaskStore
 from .vault import VaultError
@@ -125,7 +125,9 @@ class Flow:
             log.exception("could not send to Telegram: %s", message[:200])
 
     def _project_dir(self, t: tasks.Task) -> Path:
-        return projects.directory(self.s, t.project)
+        pdir = projects.directory(self.s, t.project)
+        redact.add_files(pdir, self.s.deny_read)  # an agent that prints a secret won't log it
+        return pdir
 
     async def _check_git(self, t: tasks.Task, wt: Path) -> None:
         """Refuse to go on if anything in .git that makes git run code changed since the
@@ -323,12 +325,15 @@ class Flow:
                 f"SPEC\n{_clip(n.section('Spec') or '', 1800)}\n\nLAST REVIEW\n{_clip(n.section('Review') or '', 800)}\n\n"
                 f"HISTORY\n{history}")
 
-    def diff(self, task_id: str) -> str:
+    def diff(self, task_id: str, stat: bool = False) -> str:
         t = self.store.get(task_id)
         base, branch = t.meta.get("base"), t.meta.get("branch")
         if not (base and branch):
             raise FlowError(f"{task_id} has no branch yet")
-        return worktree.git(self._project_dir(t), "diff", f"{base}...{branch}")
+        return worktree.git(self._project_dir(t), "diff", *(["--stat"] if stat else []), f"{base}...{branch}")
+
+    def diff_stat(self, task_id: str) -> str:
+        return self.diff(task_id, stat=True)
 
     # -- phases --------------------------------------------------------------
 

@@ -351,7 +351,6 @@ CANARIES = [
 ]
 
 
-@pending("S8")
 def test_secrets_never_reach_the_log_files(logdir):
     log = logging.getLogger("devflow.test")
     for c in CANARIES:
@@ -362,7 +361,6 @@ def test_secrets_never_reach_the_log_files(logdir):
         assert c not in text
 
 
-@pending("S8")
 def test_secrets_never_reach_telegram():
     from devflow import bot
     sent = []
@@ -540,3 +538,19 @@ def test_the_worker_gives_up_in_its_reply(setup):
     assert "no `orders` table" in (t.note.section("History") or "")
     assert "doesn't exist" in (t.note.section("Worker log") or "")
     assert "worker gave up" in flow.n.texts[-1]
+
+
+def test_values_from_a_projects_secret_files_are_masked(tmp_path):
+    from devflow import redact
+    (tmp_path / ".env").write_text("DB_HOST=localhost\nAPP_KEY=base64:canary-app-key-1234\n")
+    (tmp_path / "database.php").write_text("<?php $db['default'] = ['password' => 'canary-db-pass-99'];\n")
+    assert redact.add_files(tmp_path, [".env", "database.php", "**/*-key.pem"]) == 2
+    out = redact.redact("app key base64:canary-app-key-1234 and canary-db-pass-99")
+    assert "canary-app-key-1234" not in out and "canary-db-pass-99" not in out
+
+
+def test_redaction_leaves_ordinary_code_alone():
+    from devflow import redact
+    code = "$password = $this->input->post('password');\nif ($token === null) { return; }"
+    assert redact.redact(code) == code
+    assert redact.redact("SMTP_PASSWORD=hunter2-canary") == "SMTP_PASSWORD=[redacted]"
