@@ -3,7 +3,7 @@ import os
 import subprocess
 import sys
 
-from devflow import config, worktree
+from devflow import config, platform, worktree
 
 
 def g(cwd, *args):
@@ -50,5 +50,5 @@ def test_is_link_sees_junctions_and_symlinks_but_not_folders(tmp_path):
     else:
         os.symlink(target, link, target_is_directory=True)
 
-    assert worktree._is_link(str(link))
-    assert not worktree._is_link(str(target))
+    assert platform.is_link(str(link))
+    assert not platform.is_link(str(target))

@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from . import platform
 from .config import RUNTIME_DIR
 
 log = logging.getLogger("devflow.verify")
@@ -140,26 +141,28 @@ async def http_checks(checks: list[Check], before_host: str | None, after_host: 
     return "\n".join(rows), ok
 
 
-def php_lint(php: Path | None, wt: Path, files: list[str]) -> tuple[str, bool]:
+def php_lint(php: Path | None, wt: Path, files: list[str], env_allow: Iterable[str] = ()) -> tuple[str, bool]:
     php_files = [f for f in files if f.endswith(".php")]
     if not php_files:
         return "no PHP files changed", True
     if not php:
         return "skipped: no php.exe for this vhost's version", True
     bad = []
+    env = platform.minimal_env(env_allow)
     for f in php_files:
-        p = subprocess.run([str(php), "-l", f], cwd=wt, capture_output=True, text=True, errors="replace")
+        # The full path, so a file named "-d.php" can't be read as an option.
+        p = platform.run([str(php), "-l", str(wt / f)], cwd=wt, env=env, timeout=60)
         if p.returncode != 0:
             bad.append(f"- `{f}`: {(p.stdout + p.stderr).strip()[:300]}")
     return ("all clean" if not bad else "\n".join(bad)), not bad
 
 
-def phpunit(php: Path | None, wt: Path) -> tuple[str, bool] | None:
+def phpunit(php: Path | None, wt: Path, env_allow: Iterable[str] = ()) -> tuple[str, bool] | None:
     runner = wt / "vendor" / "bin" / "phpunit"
     if not (php and runner.exists() and any((wt / n).exists() for n in ("phpunit.xml", "phpunit.xml.dist"))):
         return None
-    p = subprocess.run([str(php), str(runner), "--colors=never"], cwd=wt, capture_output=True,
-                       text=True, errors="replace", timeout=900)
+    p = platform.run([str(php), str(runner), "--colors=never"], cwd=wt, env=platform.minimal_env(env_allow),
+                     timeout=900)
     tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-15:])
     return f"```\n{tail}\n```", p.returncode == 0
 
@@ -186,7 +189,8 @@ async def screenshot(host: str, path: str, out: Path) -> Path | None:
 
 
 async def run(task_id: str, spec: str, wt: Path, changed: list[str], php: Path | None,
-              before_host: str | None, after_host: str | None, unsafe_before: bool = False) -> Evidence:
+              before_host: str | None, after_host: str | None, unsafe_before: bool = False,
+              env_allow: Iterable[str] = ()) -> Evidence:
     parts, ok = [], True
     try:
         checks = parse_checks(spec)
@@ -204,11 +208,11 @@ async def run(task_id: str, spec: str, wt: Path, changed: list[str], php: Path |
     else:
         parts.append("**HTTP checks**: skipped — no temporary vhost")
 
-    lint, good = await asyncio.to_thread(php_lint, php, wt, changed)
+    lint, good = await asyncio.to_thread(php_lint, php, wt, changed, env_allow)
     parts.append(f"**php -l**: {lint}")
     ok &= good
 
-    unit = await asyncio.to_thread(phpunit, php, wt)
+    unit = await asyncio.to_thread(phpunit, php, wt, env_allow)
     if unit:
         parts.append(f"**phpunit**:\n{unit[0]}")
         ok &= unit[1]

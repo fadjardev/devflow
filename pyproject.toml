@@ -50,6 +50,7 @@ module = [
     "devflow.gitsafe",
     "devflow.logs",
     "devflow.mcp_server",
+    "devflow.platform",
     "devflow.projects",
     "devflow.redact",
     "devflow.sync",

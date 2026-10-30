@@ -472,7 +472,7 @@ class Flow:
         php = projects.php_exe(self.s, vh.port) if vh else None
         ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, php,
                               vh.host if vh else None, t.meta.get("vhost") or None,
-                              unsafe_before=self.s.before_unsafe_methods)
+                              unsafe_before=self.s.before_unsafe_methods, env_allow=self.s.check_env_allow)
 
         ref, fetched = await self._sync(pdir)
         clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)

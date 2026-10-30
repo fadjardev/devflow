@@ -44,6 +44,7 @@ class Settings:
     worker_shell_allow: list[str] = field(default_factory=list)
     unsafe_shell: bool = False  # allow every shell command except git; see docs/security.md
     before_unsafe_methods: bool = False  # run POST/PUT/DELETE checks against your checkout too
+    check_env_allow: list[str] = field(default_factory=list)  # env vars lint/test commands may see
     share_code_via_telegram: bool = True  # False: /diff sends a summary and a local path instead
 
     @property
@@ -80,4 +81,5 @@ def load() -> Settings:
         unsafe_shell=_bool(env("UNSAFE_SHELL", "")),
         before_unsafe_methods=_bool(env("BEFORE_UNSAFE_METHODS", "")),
         share_code_via_telegram=_bool(env("SHARE_CODE_VIA_TELEGRAM", "true")),
+        check_env_allow=_list(env("CHECK_ENV_ALLOW", "")),
     )

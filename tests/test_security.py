@@ -402,7 +402,6 @@ def _records(tmp_path: Path) -> list[dict]:
     return [json.loads(line) for line in (tmp_path / "record.txt").read_text().splitlines()]
 
 
-@pending("S9")
 def test_php_lint_never_reads_a_file_name_as_an_option(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
@@ -412,7 +411,6 @@ def test_php_lint_never_reads_a_file_name_as_an_option(tmp_path):
     assert not [a for a in rec["argv"][1:] if a.startswith("-") and a.endswith(".php")]
 
 
-@pending("S9")
 def test_verification_runs_without_our_secrets_in_its_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_TOKEN", "123:tg-canary")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-canary")

@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import platform
 from .config import RUNTIME_DIR, Settings
 
 log = logging.getLogger("devflow.opencode")
@@ -96,7 +97,7 @@ class Client:
         out = open(RUNTIME_DIR / "opencode-serve.log", "ab")
         log.info("starting opencode serve on port %s (output in %s)", port, RUNTIME_DIR / "opencode-serve.log")
         self._server = subprocess.Popen([exe, "serve", "--port", port], env=env, stdout=out, stderr=out,
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                                        **platform.group_kwargs())  # type: ignore[call-overload]
         for _ in range(60):
             if await self.alive():
                 return
@@ -183,4 +184,4 @@ class Client:
         await self.http.aclose()
         if self._server and self._server.poll() is None:
             # opencode.CMD wraps node: kill the whole tree, not just cmd.exe.
-            subprocess.run(["taskkill", "/T", "/F", "/PID", str(self._server.pid)], capture_output=True)
+            platform.kill_tree(self._server)
