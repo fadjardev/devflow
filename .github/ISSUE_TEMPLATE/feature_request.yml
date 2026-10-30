@@ -1,0 +1,21 @@
+name: Feature request
+description: A problem devflow could solve, or a setup it should support.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do and what gets in the way. Start with the problem, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+      description: How you imagine it working. Mention anything that affects the safety model.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: OS, stack (language, framework, web server), and anything unusual about it.
