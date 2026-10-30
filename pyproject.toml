@@ -2,7 +2,7 @@
 name = "devflow"
 version = "0.1.0"
 description = "Supervised AI coding workflow driven from Telegram: Claude Code plans and reviews, opencode writes the code, you approve the plan and the diff"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
     "python-telegram-bot>=21",

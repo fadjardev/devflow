@@ -20,7 +20,7 @@ They also need to keep its safety model intact.
 
 ## Development setup
 
-You need Python 3.10+ and git. Claude Code, opencode, nginx and a Telegram bot
+You need Python 3.11+ and git. Claude Code, opencode, nginx and a Telegram bot
 are **not** needed to run the tests, because the agents are faked.
 
 ```bat

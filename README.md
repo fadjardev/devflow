@@ -214,7 +214,7 @@ keeps working on the last-fetched refs and says so in every message.
 
 - **Windows.** Worktrees link folders with directory junctions, and the
   temporary vhosts drive a local `nginx.exe`.
-- **Python 3.10+.**
+- **Python 3.11+.**
 - **[Claude Code](https://claude.com/claude-code)** (`claude` on `PATH`, logged in)
   and **[opencode](https://opencode.ai)** (`opencode` on `PATH`, with a provider
   configured), plus **git**.
