@@ -17,7 +17,7 @@ from pathlib import Path
 from string import Template
 from typing import Protocol
 
-from . import claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhosts, worktree
+from . import checks, claude, gitsafe, logs, opencode, projects, redact, sync, tasks, verify, vhosts, worktree
 from .config import Settings, prompts_dir, runtime_dir
 from .tasks import TaskStore
 from .vault import VaultError
@@ -372,6 +372,11 @@ class Flow:
             feedback=f"\n## Your previous plan was rejected\n\n{feedback}\n" if feedback else "",
             base_ref=ref, sync_note=fetched.note(), overlap_days=self.s.overlap_days,
             overlaps=sync.describe(found) or "(none)",
+            checks=checks.describe(self._ps(t).checks),
+            http=("devflow serves the worktree on a temporary site and runs your checks there, and on "
+                  "the main checkout for comparison" if vhosts.get(self.s).find(pdir) else
+                  "this project has no temporary site, so HTTP checks will NOT run; still write them, "
+                  "they document what to check by hand"),
         )
         await self.n.text(f"🧠 {task_id} planning…")
         res = await claude.run(self._ps(t), prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
@@ -498,7 +503,8 @@ class Flow:
         site = vhosts.get(self.s).find(pdir)
         ev = await verify.run(task_id, t.note.section("Spec") or "", wt, changed, site.php if site else None,
                               site.host if site else None, t.meta.get("vhost") or None,
-                              unsafe_before=self.s.before_unsafe_methods, env_allow=self._ps(t).check_env_allow)
+                              unsafe_before=self.s.before_unsafe_methods, env_allow=self._ps(t).check_env_allow,
+                              check_config=self._ps(t).checks)
 
         ref, fetched = await self._sync(pdir, t)
         clean, conflicts = await asyncio.to_thread(sync.merge_check, wt, ref)

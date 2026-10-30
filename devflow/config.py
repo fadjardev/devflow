@@ -63,6 +63,15 @@ def _bool(value: str) -> bool:
 
 
 @dataclass(frozen=True)
+class CheckConfig:
+    """Lint and test commands run in the worktree after the worker (see checks/)."""
+    preset: str | None = None  # "php": php -l on changed files, then phpunit or pest
+    lint: list[str] = field(default_factory=list)
+    test: list[str] = field(default_factory=list)
+    timeout: int = 600  # seconds per command
+
+
+@dataclass(frozen=True)
 class Project:
     """One `[projects.<name>]` entry. Unset overrides fall back to the global setting."""
     name: str
@@ -72,6 +81,7 @@ class Project:
     deny_read: list[str] | None = None
     worker_shell_allow: list[str] | None = None
     check_env_allow: list[str] | None = None
+    checks: CheckConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -100,6 +110,7 @@ class Settings:
     before_unsafe_methods: bool = False  # run POST/PUT/DELETE checks against your checkout too
     check_env_allow: list[str] = field(default_factory=list)  # env vars lint/test commands may see
     share_code_via_telegram: bool = True  # False: /diff sends a summary and a local path instead
+    checks: CheckConfig = field(default_factory=lambda: CheckConfig(preset="php"))
     registry: dict[str, Project] | None = None  # None: the projects are the vault's notes (legacy)
     vault_is_own: bool = False  # no vault configured: notes live in the runtime folder
     source: str = ""  # where these settings came from, for doctor
@@ -154,6 +165,7 @@ def from_env(env_file: Path | None = None) -> Settings:
         before_unsafe_methods=_bool(env("BEFORE_UNSAFE_METHODS", "")),
         share_code_via_telegram=_bool(env("SHARE_CODE_VIA_TELEGRAM", "true")),
         check_env_allow=_list(env("CHECK_ENV_ALLOW", "")),
+        checks=CheckConfig(preset="php"),  # what devflow always ran
         source=f"legacy: {env_file or REPO_ROOT / '.env'} and the environment",
     )
 
@@ -213,6 +225,16 @@ def _kind(kind: type | tuple[type, ...]) -> str:
     return " or ".join(names.get(k, k.__name__) for k in (kind if isinstance(kind, tuple) else (kind,)))
 
 
+def _checks(table: _Table) -> CheckConfig:
+    preset = table._get("preset", str, None)
+    if preset not in (None, "php"):
+        raise ConfigError(f"{table.where}.preset must be \"php\" or left out, not {preset!r}")
+    cfg = CheckConfig(preset=preset, lint=table.texts("lint", []) or [], test=table.texts("test", []) or [],
+                      timeout=table.number("timeout", 600))
+    table.done()
+    return cfg
+
+
 def from_toml(path: Path) -> Settings:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -258,6 +280,7 @@ def from_toml(path: Path) -> Settings:
             deny_read=entry.texts("deny_read", None),
             worker_shell_allow=entry.texts("worker_shell_allow", None),
             check_env_allow=entry.texts("check_env_allow", None),
+            checks=_checks(entry.table("checks")) if "checks" in entry.data else None,
         )
         entry.done()
     projects.done()
@@ -292,6 +315,7 @@ def from_toml(path: Path) -> Settings:
         before_unsafe_methods=safety.flag("before_unsafe_methods", False),
         check_env_allow=safety.texts("check_env_allow", []) or [],
         share_code_via_telegram=safety.flag("share_code_via_telegram", True),
+        checks=_checks(top.table("checks")),
         registry=registry,
         source=str(path),
     )

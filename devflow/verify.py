@@ -24,8 +24,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from . import platform
-from .config import runtime_dir
+from . import checks as check_commands
+from .checks import php as php_preset
+from .checks.schema import BadChecks as BadChecks  # re-exported: callers catch verify.BadChecks
+from .checks.schema import validate
+from .config import CheckConfig, runtime_dir
 
 log = logging.getLogger("devflow.verify")
 
@@ -48,10 +51,6 @@ class Evidence:
     markdown: str
     ok: bool
     screenshot: Path | None = None
-
-
-class BadChecks(ValueError):
-    """The spec's checks would leave the task's own vhost (PRD SR7)."""
 
 
 SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
@@ -84,11 +83,10 @@ def parse_checks(spec: str) -> list[Check]:
         return []
     try:
         items = json.loads(m.group(1))
-    except json.JSONDecodeError:
-        return []
-    keys = Check.__dataclass_fields__
-    checks = [Check(**{k: v for k, v in it.items() if k in keys})
-              for it in items if isinstance(it, dict) and "path" in it]
+    except json.JSONDecodeError as e:
+        raise BadChecks(f"the devflow-checks block is not valid JSON: {e}") from None
+    validate(items)
+    checks = [Check(**it) for it in items]
     for c in checks:
         check_path(c.path)
     return checks
@@ -141,32 +139,6 @@ async def http_checks(checks: list[Check], before_host: str | None, after_host: 
     return "\n".join(rows), ok
 
 
-def php_lint(php: Path | None, wt: Path, files: list[str], env_allow: Iterable[str] = ()) -> tuple[str, bool]:
-    php_files = [f for f in files if f.endswith(".php")]
-    if not php_files:
-        return "no PHP files changed", True
-    if not php:
-        return "skipped: no php.exe for this vhost's version", True
-    bad = []
-    env = platform.minimal_env(env_allow)
-    for f in php_files:
-        # The full path, so a file named "-d.php" can't be read as an option.
-        p = platform.run([str(php), "-l", str(wt / f)], cwd=wt, env=env, timeout=60)
-        if p.returncode != 0:
-            bad.append(f"- `{f}`: {(p.stdout + p.stderr).strip()[:300]}")
-    return ("all clean" if not bad else "\n".join(bad)), not bad
-
-
-def phpunit(php: Path | None, wt: Path, env_allow: Iterable[str] = ()) -> tuple[str, bool] | None:
-    runner = wt / "vendor" / "bin" / "phpunit"
-    if not (php and runner.exists() and any((wt / n).exists() for n in ("phpunit.xml", "phpunit.xml.dist"))):
-        return None
-    p = platform.run([str(php), str(runner), "--colors=never"], cwd=wt, env=platform.minimal_env(env_allow),
-                     timeout=900)
-    tail = "\n".join((p.stdout + p.stderr).strip().splitlines()[-15:])
-    return f"```\n{tail}\n```", p.returncode == 0
-
-
 async def screenshot(host: str, path: str, out: Path) -> Path | None:
     url = page_url(host, path)
     try:
@@ -190,7 +162,7 @@ async def screenshot(host: str, path: str, out: Path) -> Path | None:
 
 async def run(task_id: str, spec: str, wt: Path, changed: list[str], php: Path | None,
               before_host: str | None, after_host: str | None, unsafe_before: bool = False,
-              env_allow: Iterable[str] = ()) -> Evidence:
+              env_allow: Iterable[str] = (), check_config: CheckConfig | None = None) -> Evidence:
     parts, ok = [], True
     try:
         checks = parse_checks(spec)
@@ -208,14 +180,14 @@ async def run(task_id: str, spec: str, wt: Path, changed: list[str], php: Path |
     else:
         parts.append("**HTTP checks**: skipped — no temporary vhost")
 
-    lint, good = await asyncio.to_thread(php_lint, php, wt, changed, env_allow)
-    parts.append(f"**php -l**: {lint}")
-    ok &= good
-
-    unit = await asyncio.to_thread(phpunit, php, wt, env_allow)
-    if unit:
-        parts.append(f"**phpunit**:\n{unit[0]}")
-        ok &= unit[1]
+    cfg = check_config or CheckConfig(preset="php")
+    php = php_preset.find_php(php) if cfg.preset == "php" else php
+    for r in await asyncio.to_thread(check_commands.run, cfg, wt, changed, php, env_allow):
+        sep = ":\n" if r.text.startswith("```") else ": "
+        parts.append(f"**{r.title}**{sep}{r.text}")
+        ok &= r.ok
+    if not cfg.preset and not cfg.lint and not cfg.test:
+        parts.append("**lint and tests**: none configured for this project")
 
     shot = None
     first_get = next((c for c in checks if c.method.upper() == "GET"), None)

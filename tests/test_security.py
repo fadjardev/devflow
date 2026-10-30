@@ -19,6 +19,7 @@ import pytest
 from test_pipeline import FakeOpencode, g, plan_and_code, settle, setup  # noqa: F401  (setup is a fixture)
 
 from devflow import claude, config, opencode, verify
+from devflow.checks import php as php_preset
 
 
 def pending(finding: str):
@@ -419,7 +420,7 @@ def test_php_lint_never_reads_a_file_name_as_an_option(tmp_path):
     wt = tmp_path / "wt"
     wt.mkdir()
     (wt / "-d.php").write_text("<?php\n")
-    verify.php_lint(_fake_php(tmp_path), wt, ["-d.php"])
+    php_preset.php_lint(_fake_php(tmp_path), wt, ["-d.php"])
     (rec,) = _records(tmp_path)
     assert not [a for a in rec["argv"][1:] if a.startswith("-") and a.endswith(".php")]
 
@@ -432,8 +433,8 @@ def test_verification_runs_without_our_secrets_in_its_environment(tmp_path, monk
     (wt / "vendor" / "bin" / "phpunit").write_text("")
     (wt / "phpunit.xml").write_text("<phpunit/>")
     php = _fake_php(tmp_path)
-    verify.php_lint(php, wt, ["a.php"])
-    verify.phpunit(php, wt)
+    php_preset.php_lint(php, wt, ["a.php"])
+    php_preset.phpunit(php, wt)
     for rec in _records(tmp_path):
         assert "TELEGRAM_TOKEN" not in rec["env"] and "ANTHROPIC_API_KEY" not in rec["env"]
 

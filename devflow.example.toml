@@ -50,6 +50,14 @@ check_env_allow = []             # extra environment variables lint/test command
 before_unsafe_methods = false    # also run POST/PUT/DELETE checks against your own checkout
 share_code_via_telegram = true   # false: /diff sends a summary and a local path, not code
 
+[checks]
+# Lint and test commands devflow runs in the worktree after the worker, with a minimal
+# environment and this timeout each. A failure goes to the reviewer and to you at gate 2.
+# preset = "php"           # php -l on changed files, then phpunit or pest when present
+lint = []                  # e.g. ["npm run lint"]
+test = []                  # e.g. ["npm test -- --run"]
+timeout = 600              # seconds per command
+
 [vhost]
 # Where a task's change is served for HTTP checks and screenshots:
 # "none" (skip them) or "devcrate" (a Windows nginx + PHP stack).
@@ -64,3 +72,6 @@ path = "C:/work/projects/shop"
 # deny_read = [".env", "config/database.php"]
 # worker_shell_allow = ["php -l *"]
 # check_env_allow = ["APP_ENV"]
+# [projects.shop.checks]   # replaces [checks] for this project
+# preset = "php"
+# test = ["vendor/bin/pest --parallel"]

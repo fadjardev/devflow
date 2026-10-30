@@ -19,10 +19,25 @@ things, and the changelog says how).
   `BEFORE_UNSAFE_METHODS` and `SHARE_CODE_VIA_TELEGRAM` settings.
 - `python -m devflow doctor --fix` makes `.env` and the runtime folder private.
 - [docs/security.md](docs/security.md): what is enforced and what isn't.
+- `devflow.toml` with a `[projects.<name>]` registry and per-project overrides
+  ([devflow.example.toml](devflow.example.toml)); the `devflow` command with
+  `run`, `init`, `migrate-env` and `doctor`.
+- Runs on Linux and macOS (symlinks, process groups).
+- Works without a vault: devflow keeps its notes in its runtime folder.
+- Per-project lint and test commands (`[checks]`), with a `php` preset that
+  reproduces the old behaviour and adds pest.
+- The `devflow-checks` block is validated against a schema.
 
 ### Changed
 
 - Python 3.11 or newer is required (was 3.10).
+- **Breaking:** without a `devflow.toml`, `VAULT_PATH` and `PROJECTS_PATH`
+  must be set; nothing falls back to built-in paths. `DEVCRATE_ROOT` has no
+  default, and without it HTTP checks are skipped.
+- An empty `base_branch` (the TOML default) follows the remote's default
+  branch.
+- The vhost code moved behind a provider interface (`none`, `devcrate`).
+- The prompts ship inside the package (`devflow/prompts/`).
 - **Breaking:** the worker's shell runs only the commands in
   `WORKER_SHELL_ALLOW` (default `php -l *`); git is always refused.
 - **Breaking:** Claude has no shell. It reads git through devflow-mcp's `git`
