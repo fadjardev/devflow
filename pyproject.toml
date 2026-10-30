@@ -39,3 +39,31 @@ files = ["devflow"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+# Modules converted to strict typing. Add a module here once it passes; new modules start here.
+[[tool.mypy.overrides]]
+module = [
+    "devflow.__main__",
+    "devflow.claude",
+    "devflow.config",
+    "devflow.fmt",
+    "devflow.logs",
+    "devflow.projects",
+    "devflow.sync",
+    "devflow.tasks",
+    "devflow.vault",
+    "devflow.verify",
+    "devflow.vhost",
+    "devflow.worktree",
+]
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+extra_checks = true

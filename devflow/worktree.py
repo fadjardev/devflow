@@ -7,6 +7,7 @@ import re
 import shutil
 import stat
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from .config import Settings
@@ -21,7 +22,7 @@ _ENV = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
         "GIT_EDITOR": "true", "GIT_SEQUENCE_EDITOR": "true", "GIT_MERGE_AUTOEDIT": "no"}
 
 
-def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess:
+def run(cwd: Path, *args: str, timeout: float = 300) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", env=_ENV, stdin=subprocess.DEVNULL, timeout=timeout)
@@ -41,7 +42,8 @@ def slug(text: str, limit: int = 40) -> str:
     return s[:limit].rstrip("-") or "task"
 
 
-def branch_name(kind: str, task_id: str, title: str, prefix: str = "devflow", taken=lambda name: False) -> str:
+def branch_name(kind: str, task_id: str, title: str, prefix: str = "devflow",
+                taken: Callable[[str], bool] = lambda name: False) -> str:
     """devflow/fix/261002-01-sort-columns — namespaced so colleagues see where it came from,
     and never a name that already exists locally or on the remote."""
     kind = kind if kind in ("feat", "fix", "refactor", "chore", "docs", "perf") else "fix"

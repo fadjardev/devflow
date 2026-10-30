@@ -47,7 +47,7 @@ def render(source: str, vh: Vhost, task_id: str, worktree_name: str) -> tuple[st
     return host, header + "\n".join(lines) + "\n"
 
 
-def _nginx(settings: Settings, *args: str) -> subprocess.CompletedProcess:
+def _nginx(settings: Settings, *args: str) -> subprocess.CompletedProcess[str]:
     exe = settings.nginx_prefix / "current" / "nginx.exe"
     prefix = str(settings.nginx_prefix).rstrip("\\/") + "/"
     return subprocess.run([str(exe), "-p", prefix, *args], cwd=settings.nginx_prefix,
