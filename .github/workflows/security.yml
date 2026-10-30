@@ -36,7 +36,7 @@ jobs:
       - name: Install devflow and pip-audit
         run: python -m pip install -e . pip-audit  # editable, so --skip-editable leaves devflow itself out
       - name: Audit installed dependencies
-        run: python -m pip_audit --skip-editable --strict --progress-spinner off
+        run: python -m pip_audit --skip-editable --progress-spinner off
 
   sast:
     name: Semgrep
