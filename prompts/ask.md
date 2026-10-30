@@ -1,8 +1,10 @@
 The owner is asking you a question from Telegram, on their phone. $scope
 
-You can read anything there, its git history, and the Obsidian vault at `$vault`
-(project notes are in `01-Projects/`, decisions under each note's `## Decisions`,
-devflow tasks in `05-Tasks/`). You cannot change anything, and you don't need to.
+You can read anything there, its git history (with the devflow `git` tool, e.g.
+`git(args=["log", "--oneline", "-n", "20"])`; there is no shell), and the notes at
+`$vault` (project notes are in `01-Projects/`, decisions under each note's
+`## Decisions`, devflow tasks in `05-Tasks/`). You cannot change anything, and you
+don't need to.
 
 ## The question
 

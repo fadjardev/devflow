@@ -29,7 +29,7 @@ def flow(vault, tmp_path, monkeypatch):
                                    deny_read=[".env", "**/*-key.pem"])
     calls = []
 
-    async def fake_claude(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800):
+    async def fake_claude(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800, bind=None):
         calls.append({"prompt": prompt, "cwd": Path(cwd), "tools": tools, "resume": resume, "add_dirs": add_dirs})
         if "explode" in prompt:
             return claude.Result("API error", "", False)
@@ -47,7 +47,9 @@ def test_question_runs_read_only_in_the_project_then_follows_up(flow):
     first = flow.calls[0]
     assert first["cwd"] == flow.checkout and first["tools"] is claude.ASKER_TOOLS and first["resume"] == ""
     assert "where is login handled?" in first["prompt"] and "project `demo.app`" in first["prompt"]
-    assert flow.s.vault in first["add_dirs"]
+    # the project's notes, not the whole vault (PRD SR13)
+    assert flow.s.vault not in first["add_dirs"]
+    assert [d for d in first["add_dirs"] if (d / "01-Projects" / "demo.app.md").is_file()]
     assert text.startswith("answer 1") and "demo.app · $0.12" in text and follow.session == "sess-1"
 
     text, again = asyncio.run(flow.ask(follow, "and logout?"))

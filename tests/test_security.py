@@ -169,7 +169,6 @@ def test_a_write_into_a_linked_folder_is_caught_at_gate_2(setup):
 ALL_CLAUDE_TOOLS = [claude.PLANNER_TOOLS, claude.REVIEWER_TOOLS, claude.CLOSER_TOOLS, claude.ASKER_TOOLS]
 
 
-@pending("S4")
 def test_claude_gets_no_prefix_matched_git_rules():
     """`Bash(git diff:*)` also allows `git log --output=<any path>` (reproduced, ADR 0004)."""
     for tools in ALL_CLAUDE_TOOLS:
@@ -229,7 +228,6 @@ def _call(server, name, **args):
     return asyncio.run(server.mcp.call_tool(name, args)).content[0].text
 
 
-@pending("S5")
 def test_mcp_bound_to_one_task_refuses_another(store, vault, monkeypatch):
     a = store.create("demo.app", "a", "r", "x")
     b = store.create("demo.app", "b", "r", "y")
@@ -241,7 +239,6 @@ def test_mcp_bound_to_one_task_refuses_another(store, vault, monkeypatch):
     assert "evil" not in (store.get(b.id).note.section("Spec") or "")
 
 
-@pending("S5")
 def test_spec_is_frozen_after_gate_1(store, vault, monkeypatch):
     t = store.create("demo.app", "a", "r", "x")
     store.append(t.id, "Spec", "the approved spec", actor="agent")
@@ -252,7 +249,6 @@ def test_spec_is_frozen_after_gate_1(store, vault, monkeypatch):
     assert "delete users" not in (store.get(t.id).note.section("Spec") or "")
 
 
-@pending("S5")
 def test_only_the_closer_writes_project_notes_and_only_appends(store, vault, monkeypatch):
     t = store.create("demo.app", "a", "r", "x")
     before = (vault / "01-Projects" / "demo.app.md").read_text(encoding="utf-8")
@@ -470,16 +466,15 @@ def test_windows_acl_readable_by_everyone_is_flagged(tmp_path):
 
 # -- S12: vault scope ----------------------------------------------------------------------
 
-@pending("S12")
 def test_claude_never_gets_the_whole_vault(setup, monkeypatch):
     flow = setup[0]
     from devflow import pipeline
     fake = pipeline.claude.run
     seen = []
 
-    async def spy(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800):
+    async def spy(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800, bind=None):
         seen.append(tuple(Path(d) for d in add_dirs))
-        return await fake(s, prompt, cwd, tools, resume, add_dirs, timeout)
+        return await fake(s, prompt, cwd, tools, resume, add_dirs, timeout, bind)
 
     monkeypatch.setattr(pipeline.claude, "run", spy)
     (flow.s.vault / "Private").mkdir()
@@ -509,3 +504,26 @@ def test_gates_warn_while_the_shell_is_unrestricted(setup):
         assert any("UNSAFE_SHELL" in m and "reviewed and ready" in m for m in flow.n.texts)  # gate 2
 
     asyncio.run(scenario())
+
+
+def test_the_close_message_shows_what_the_closer_added_to_the_project_note(setup, monkeypatch):
+    """Project notes are read by every later run, so a write there is shown to the human (SR6)."""
+    flow = setup[0]
+    from devflow import pipeline
+    fake = pipeline.claude.run
+
+    async def closer_writes(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800, bind=None):
+        if tools is claude.CLOSER_TOOLS:
+            from devflow import tasks
+            tasks.update_project_section(flow.s.vault, "demo.app", "Gotchas", "- the demo needs a warm cache")
+        return await fake(s, prompt, cwd, tools, resume, add_dirs, timeout, bind)
+
+    monkeypatch.setattr(pipeline.claude, "run", closer_writes)
+
+    async def scenario():
+        t = await plan_and_code(flow)
+        await flow.approve(t.id)
+        await settle(flow, t.id)
+
+    asyncio.run(scenario())
+    assert "the demo needs a warm cache" in flow.n.texts[-1] and "project note" in flow.n.texts[-1]

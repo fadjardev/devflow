@@ -18,7 +18,7 @@ from string import Template
 from typing import Protocol
 
 from . import claude, gitsafe, logs, opencode, projects, sync, tasks, verify, vhost, worktree
-from .config import PROMPTS_DIR, Settings
+from .config import PROMPTS_DIR, RUNTIME_DIR, Settings
 from .tasks import TaskStore
 from .vault import VaultError
 
@@ -58,6 +58,12 @@ def _prompt(name: str, **values) -> str:
 def _clip(text: str, limit: int = 1500) -> str:
     text = (text or "").strip()
     return text if len(text) <= limit else text[:limit].rstrip() + "\n…"
+
+
+def _added(before: str, after: str) -> str:
+    """The lines an append-only writer added to a note."""
+    old = set(before.splitlines())
+    return "\n".join(line for line in after.splitlines() if line not in old).strip()
 
 
 def _title_parts(t: tasks.Task) -> tuple[str, str, str]:
@@ -134,6 +140,10 @@ class Flow:
                 f"⚠️ .git was changed while the task ran: {', '.join(changed)}. Something may have "
                 f"planted code that git runs. devflow ran none of it. Inspect and restore these in the "
                 f"main checkout before /retry; the task can't be approved until they match again.")
+
+    def _notes(self, name: str, project: str) -> Path:
+        """The notes Claude may read for this run: a copy of the project's notes, not the vault."""
+        return tasks.copy_view(self.s.vault, RUNTIME_DIR / "notes" / name, project)
 
     def _unsafe(self) -> str:
         """Said on every gate while the worker's shell is unrestricted, so it is never forgotten."""
@@ -275,10 +285,13 @@ class Flow:
         try:
             async with self.ask_slots:
                 log.info("question%s: %s", " (follow-up)" if target.session else "", question[:300])
+                scope = "*" if target.cwd == self.s.projects else target.label
+                notes = await asyncio.to_thread(self._notes, f"ask-{'all' if scope == '*' else scope}", scope)
                 prompt = question if target.session else _prompt(
-                    "ask", scope=target.scope, vault=self.s.vault, question=question)
+                    "ask", scope=target.scope, vault=notes, question=question)
                 res = await claude.run(self.s, prompt, target.cwd, claude.ASKER_TOOLS, resume=target.session,
-                                       add_dirs=(self.s.vault,), timeout=ASK_TIMEOUT)
+                                       add_dirs=(notes,), timeout=ASK_TIMEOUT,
+                                       bind=claude.Bind("asker", scope=scope))
             if not res.ok:
                 raise RuntimeError(f"couldn't answer: {_clip(res.text, 500)}")
             log.info("answered (%d chars, $%.2f)", len(res.text), res.cost_usd)
@@ -324,16 +337,18 @@ class Flow:
         ref, fetched = await self._sync(pdir)
         found = await asyncio.to_thread(sync.overlaps, self.s, pdir, ref)
         self.store.update(task_id, base_ref=ref)
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
         prompt = _prompt(
-            "plan", task_id=task_id, project=t.project, project_dir=pdir, vault=self.s.vault,
+            "plan", task_id=task_id, project=t.project, project_dir=pdir, vault=notes,
             request=t.note.section("Request") or "",
             feedback=f"\n## Your previous plan was rejected\n\n{feedback}\n" if feedback else "",
             base_ref=ref, sync_note=fetched.note(), overlap_days=self.s.overlap_days,
             overlaps=sync.describe(found) or "(none)",
         )
         await self.n.text(f"🧠 {task_id} planning…")
-        res = await claude.run(self.s, prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(self.s.vault,),
-                               resume=t.meta.get("claude_session", "") if feedback else "")
+        res = await claude.run(self.s, prompt, pdir, claude.PLANNER_TOOLS, add_dirs=(notes,),
+                               resume=t.meta.get("claude_session", "") if feedback else "",
+                               bind=claude.Bind("planner", task_id))
         if not res.ok:
             raise RuntimeError(f"planner failed: {_clip(res.text, 500)}")
         t = self.store.get(task_id)
@@ -511,7 +526,9 @@ class Flow:
                          base=t.meta["base"], round=rnd, max_rounds=self.s.max_bounces + 1, evidence=evidence)
         await self.n.text(f"🔍 {task_id} reviewing (round {rnd})…")
         before = self.store.get(task_id).note.section("Review") or ""
-        res = await claude.run(self.s, prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(self.s.vault,))
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
+        res = await claude.run(self.s, prompt, wt, claude.REVIEWER_TOOLS, add_dirs=(notes,),
+                               bind=claude.Bind("reviewer", task_id))
         if not res.ok:
             raise RuntimeError(f"reviewer failed: {_clip(res.text, 500)}")
         m = _VERDICT.search(res.text)
@@ -586,13 +603,22 @@ class Flow:
                               f" — merged cleanly in simulation at approval; not merged, not pushed.\n\n"
                               f"```\n{commits}\n```")
             self.store.update(task_id, result_written=True)
+        notes = await asyncio.to_thread(self._notes, task_id, t.project)
+        note_path = self.s.vault / tasks.PROJECTS_DIR / f"{t.project}.md"
+        before = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
         res = await claude.run(self.s, _prompt("close", task_id=task_id, project=t.project, branch=t.meta["branch"]),
-                               pdir, claude.CLOSER_TOOLS, add_dirs=(self.s.vault,), timeout=600)
+                               pdir, claude.CLOSER_TOOLS, add_dirs=(notes,), timeout=600,
+                               bind=claude.Bind("closer", task_id))
         if not res.ok:
             log.error("closer failed: %s", _clip(res.text, 500))
         self.store.update(task_id, closed=not leftovers)
         recorded = _clip(res.text, 400) if res.ok else "(closer failed; nothing recorded)"
-        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n{recorded}{leftovers}")
+        after = note_path.read_text(encoding="utf-8") if note_path.is_file() else ""
+        added = _added(before, after)
+        written = (f"\n\n📝 Added to the {t.project} project note (every later run reads it):\n{_clip(added, 1200)}"
+                   if added else "")
+        await self.n.text(f"🏁 {task_id} done. Branch `{t.meta['branch']}` is ready to merge.\n"
+                          f"{recorded}{written}{leftovers}")
 
     async def close(self) -> None:
         for job in list(self.jobs.values()):

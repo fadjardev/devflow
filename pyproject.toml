@@ -49,6 +49,7 @@ module = [
     "devflow.fmt",
     "devflow.gitsafe",
     "devflow.logs",
+    "devflow.mcp_server",
     "devflow.projects",
     "devflow.sync",
     "devflow.tasks",

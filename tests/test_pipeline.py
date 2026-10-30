@@ -102,7 +102,7 @@ def setup(tmp_path, monkeypatch):
     ctl = {"reviews": ["VERDICT: APPROVE"], "plan_prompts": []}
     calls = []
 
-    async def fake_claude(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800):
+    async def fake_claude(s, prompt, cwd, tools, resume="", add_dirs=(), timeout=1800, bind=None):
         calls.append(tools)
         if tools is claude.PLANNER_TOOLS:
             ctl["plan_prompts"].append(prompt)
