@@ -28,6 +28,7 @@ class Settings:
     devcrate_root: Path
     telegram_token: str = ""
     allowed_chat_id: int = 0
+    allowed_user_ids: list[int] = field(default_factory=list)  # required when the chat is a group
     max_workers: int = 3
     max_bounces: int = 2
     opencode_url: str = "http://127.0.0.1:4096"
@@ -62,6 +63,7 @@ def load() -> Settings:
         devcrate_root=Path(env("DEVCRATE_ROOT", r"E:\dev")),
         telegram_token=env("TELEGRAM_TOKEN", ""),
         allowed_chat_id=int(env("ALLOWED_CHAT_ID", "0") or 0),
+        allowed_user_ids=[int(u) for u in _list(env("ALLOWED_USER_IDS", ""))],
         max_workers=int(env("MAX_WORKERS", "3")),
         max_bounces=int(env("MAX_BOUNCES", "2")),
         opencode_url=env("OPENCODE_URL", "http://127.0.0.1:4096").rstrip("/"),

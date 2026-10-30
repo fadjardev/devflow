@@ -317,12 +317,14 @@ def _update(chat_id: int, user_id: int, text: str = "/approve 261030-01"):
 
 
 def _served(app, update) -> bool:
+    """Whether any handler but the silent catch-all would take this update. The chat/user
+    filter is what decides; command parsing needs a live bot and doesn't matter here."""
     from devflow import bot
-    return any(h.check_update(update) and h.callback is not bot._ignored
+    return any(h.callback is not bot._ignored and getattr(h, "filters", None) is not None
+               and h.filters.check_update(update)
                for group in app.handlers.values() for h in group)
 
 
-@pending("S7")
 def test_group_members_not_on_the_user_list_are_ignored():
     from devflow import bot
     settings = dataclasses.replace(config.load(), telegram_token="123:abc", allowed_chat_id=-1001,
@@ -332,7 +334,6 @@ def test_group_members_not_on_the_user_list_are_ignored():
     assert not _served(app, _update(-1001, 7))
 
 
-@pending("S7")
 def test_a_group_chat_without_a_user_list_does_not_start():
     from devflow import bot
     settings = dataclasses.replace(config.load(), telegram_token="123:abc", allowed_chat_id=-1001)

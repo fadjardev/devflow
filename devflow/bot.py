@@ -1,7 +1,8 @@
 """The Telegram front end. Thin: parse a command, call `Flow`, send the answer.
 
-Only ALLOWED_CHAT_ID is served; every other chat is ignored without a reply,
-so the bot gives a stranger nothing to probe.
+Only ALLOWED_CHAT_ID is served, and in a group only ALLOWED_USER_IDS; every
+other chat and sender is ignored without a reply, so the bot gives a stranger
+nothing to probe.
 """
 
 from __future__ import annotations
@@ -357,6 +358,9 @@ async def _ignored(update: Update, ctx):
 def build(settings: Settings) -> Application:
     if not settings.telegram_token or not settings.allowed_chat_id:
         raise SystemExit("set TELEGRAM_TOKEN and ALLOWED_CHAT_ID in devflow/.env")
+    if settings.allowed_chat_id < 0 and not settings.allowed_user_ids:
+        # In a group every member could /approve, /diff and /ask; name who may.
+        raise SystemExit("ALLOWED_CHAT_ID is a group: set ALLOWED_USER_IDS to the members who may use the bot")
 
     async def on_start(app: Application) -> None:
         logs.watch_loop(asyncio.get_running_loop())
@@ -381,7 +385,9 @@ def build(settings: Settings) -> Application:
            .connect_timeout(20).read_timeout(30).write_timeout(30).pool_timeout(10)
            .get_updates_connect_timeout(20).get_updates_read_timeout(40)
            .post_init(on_start).post_shutdown(on_stop).build())
-    me = filters.Chat(chat_id=settings.allowed_chat_id)
+    me: filters.BaseFilter = filters.Chat(chat_id=settings.allowed_chat_id)
+    if settings.allowed_user_ids:
+        me = me & filters.User(user_id=settings.allowed_user_ids)
     for name, fn in [("start", cmd_help), ("help", cmd_help), ("task", cmd_task), ("status", cmd_status),
                      ("show", cmd_show), ("approve", cmd_approve), ("reject", cmd_reject), ("answer", cmd_reject),
                      ("diff", cmd_diff), ("retry", cmd_retry), ("refresh", cmd_refresh), ("stop", cmd_stop),
