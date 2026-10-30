@@ -1,0 +1,66 @@
+# devflow settings. `devflow init` writes a starter file; this one shows every setting.
+# Default location: %APPDATA%\devflow\devflow.toml (Windows), ~/.config/devflow/devflow.toml
+# (Linux), ~/Library/Application Support/devflow/devflow.toml (macOS). Use another file with
+# `devflow --config <file>` or DEVFLOW_CONFIG. Relative paths are relative to this file.
+# The file can hold the bot token, so devflow keeps it readable by you only (`devflow doctor`).
+
+[telegram]
+# From @BotFather. Leave it out to use the TELEGRAM_TOKEN environment variable instead.
+token = ""
+# The only chat devflow answers (your id from @userinfobot, or a group's negative id).
+chat_id = 0
+# Who may command the bot. Required when chat_id is a group.
+user_ids = []
+
+[paths]
+# An Obsidian (or any Markdown) vault for task notes, requests and project decisions.
+# Leave it out and devflow keeps its own notes in the runtime folder.
+# vault = "C:/work/vault"
+# A folder holding project checkouts. Worktrees go in its .worktrees folder; the devcrate
+# provider needs it. Without it, worktrees go in the runtime folder.
+# projects = "C:/work/projects"
+# Logs, locks, screenshots, devflow's own notes. Default: the user data folder.
+# runtime = "C:/work/devflow-runtime"
+
+[agents]
+max_workers = 3            # tasks coding at once (one per project)
+max_bounces = 2            # reviewer fix-ups before a task is parked for you
+opencode_url = "http://127.0.0.1:4096"   # devflow starts `opencode serve` here if nothing answers
+opencode_model = ""        # provider/model from `opencode models`; empty = opencode's default
+claude_model = ""          # e.g. "sonnet"; empty = your Claude Code default
+
+[git]
+remote = "origin"
+base_branch = ""           # tasks start from <remote>/<base_branch>; empty = the remote's default branch
+branch_prefix = "devflow"  # branches are <prefix>/<type>/<id>-<slug>
+overlap_days = 14          # other unmerged branches active this recently are flagged
+
+[safety]
+# Files no agent may read: globs relative to the project.
+deny_read = [".env", ".env.*", "**/*.pem", "**/*.key", "**/id_rsa*", "**/id_ed25519*"]
+# Gitignored files and folders a worktree needs to run, from the main checkout: folders are
+# linked (and watched), files copied.
+link_paths = []
+# Shell commands the worker may run (opencode patterns, `*` = anything). Everything else is
+# refused, and git always is. A command that runs code (a test runner, npm, composer) lets
+# a hijacked worker do anything you can; see docs/security.md.
+worker_shell_allow = []
+unsafe_shell = false             # true: any command except git. Every gate message warns.
+check_env_allow = []             # extra environment variables lint/test commands may see
+before_unsafe_methods = false    # also run POST/PUT/DELETE checks against your own checkout
+share_code_via_telegram = true   # false: /diff sends a summary and a local path, not code
+
+[vhost]
+# Where a task's change is served for HTTP checks and screenshots:
+# "none" (skip them) or "devcrate" (a Windows nginx + PHP stack).
+provider = "none"
+# devcrate_root = "C:/devcrate"
+
+# One table per project. `path` is required; the other keys override the global ones.
+[projects.shop]
+path = "C:/work/projects/shop"
+# base_branch = "develop"
+# link_paths = ["vendor", ".env"]
+# deny_read = [".env", "config/database.php"]
+# worker_shell_allow = ["php -l *"]
+# check_env_allow = ["APP_ENV"]

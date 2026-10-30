@@ -190,3 +190,8 @@ def test_an_empty_base_branch_means_the_remotes_default(tmp_path):
     g(tmp_path, "clone", "-q", str(origin), str(work))
     s = dataclasses.replace(config.load(), base_branch="", git_remote="origin")
     assert sync.base_ref(s, work) == "origin/trunk"
+
+
+def test_the_example_config_loads():
+    s = config.from_toml(config.REPO_ROOT / "devflow.example.toml")
+    assert s.registry is not None and "shop" in s.registry and s.vhost_provider == "none"

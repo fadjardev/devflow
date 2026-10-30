@@ -36,9 +36,9 @@ python -m venv .venv
 .venv\Scripts\python -m mypy
 ```
 
-On Linux or macOS, use `.venv/bin/python` instead. Some parts (directory
-junctions, the nginx vhost, `taskkill`) are still Windows-only. If a test fails
-on your OS for that reason, mention it in your issue or pull request.
+On Linux or macOS, use `.venv/bin/python` instead. CI runs the suite on
+Windows, Linux and macOS. OS-specific code belongs in `devflow/platform.py`.
+The devcrate vhost provider is Windows-only by nature.
 
 To run the bot itself, follow [Setup](README.md#setup) in the README.
 
@@ -132,7 +132,7 @@ lists the gaps that are already known.
 
 ### Prompts
 
-The agent prompts live in `prompts/`. The pipeline parses some of their output
+The agent prompts live in `devflow/prompts/`. The pipeline parses some of their output
 (`TITLE:`, `VERDICT: APPROVE|FIXUP`, the `devflow-checks` block). If you change
 a prompt, keep those markers, and check the parsing tests still pass.
 
