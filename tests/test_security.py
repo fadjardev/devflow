@@ -90,7 +90,7 @@ def test_worker_gets_no_network_or_subagents(permission):
 class TamperingWorker(FakeOpencode):
     """Plants a hook in the shared .git and points core.hooksPath at a folder it controls."""
 
-    async def prompt(self, session, directory, text, timeout, on_denied=None):
+    async def prompt(self, session, directory, text, timeout, on_denied=None, model_name=None):
         reply = await super().prompt(session, directory, text, timeout, on_denied)
         common = Path(g(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"))
         marker = directory.parent / "hook-ran.txt"
@@ -137,7 +137,7 @@ def test_gate_2_refuses_when_git_hooks_appeared_after_review(setup):
 # -- S3: linked folders --------------------------------------------------------------------
 
 class VendorWriter(FakeOpencode):
-    async def prompt(self, session, directory, text, timeout, on_denied=None):
+    async def prompt(self, session, directory, text, timeout, on_denied=None, model_name=None):
         reply = await super().prompt(session, directory, text, timeout, on_denied)
         (directory / "vendor" / "backdoor.php").write_text("<?php // planted\n")
         return reply
@@ -534,7 +534,7 @@ def test_the_close_message_shows_what_the_closer_added_to_the_project_note(setup
 
 
 class GivingUpWorker(FakeOpencode):
-    async def prompt(self, session, directory, text, timeout, on_denied=None):
+    async def prompt(self, session, directory, text, timeout, on_denied=None, model_name=None):
         self.prompts.append(text)
         return "The spec asks for a table that doesn't exist.\nBLOCKED: no `orders` table in this schema"
 

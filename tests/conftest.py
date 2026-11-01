@@ -34,6 +34,14 @@ def _runtime(tmp_path, monkeypatch):
         monkeypatch.setenv(key, str(tmp_path / sub))
 
 
+@pytest.fixture(autouse=True)
+def _no_real_opencode(monkeypatch):
+    """A test whose fake server misses a route must fail, not start the real `opencode serve`."""
+    from devflow import opencode
+    real_which = opencode.shutil.which
+    monkeypatch.setattr(opencode.shutil, "which", lambda name, *a, **k: None if name == "opencode" else real_which(name, *a, **k))
+
+
 @pytest.fixture
 def vault(tmp_path):
     (tmp_path / "01-Projects").mkdir()

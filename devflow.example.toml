@@ -29,6 +29,24 @@ opencode_url = "http://127.0.0.1:4096"   # devflow starts `opencode serve` here 
 opencode_model = ""        # provider/model from `opencode models`; empty = opencode's default
 claude_model = ""          # e.g. "sonnet"; empty = your Claude Code default
 
+# [gateway]
+# Optional: the worker's models through an OpenAI-compatible AI gateway (OmniRoute, 9Router,
+# LiteLLM, OpenRouter). devflow registers it as the opencode provider `provider_id`; the
+# worker model becomes "<provider_id>/<model>". Planner and reviewer stay on Claude Code.
+# base_url = "http://127.0.0.1:20128/v1"
+# api_key_env = "DEVFLOW_GATEWAY_KEY"   # the NAME of the variable holding the key, if one is needed
+# models = ["devflow-worker", "qwen/qwen3-coder:free"]   # the first one is the default worker model
+# free_only = true          # refuse any worker model that isn't a free tier (id ending in ":free")
+# free_combos = ["devflow-worker"]   # combos allowed under free_only; devflow checks their models are all free
+# provider_id = "gateway"
+# name = "AI gateway"
+
+[dashboard]
+# The local web dashboard: tasks, gates, diffs, usage, logs. Listens on 127.0.0.1 only.
+# `devflow dashboard` runs it without Telegram; with enabled = true, `devflow run` starts it too.
+enabled = false
+port = 8765
+
 [git]
 remote = "origin"
 base_branch = ""           # tasks start from <remote>/<base_branch>; empty = the remote's default branch
@@ -86,6 +104,7 @@ provider = "none"
 # One table per project. `path` is required; the other keys override the global ones.
 [projects.shop]
 path = "C:/work/projects/shop"
+# opencode_model = "gateway/qwen/qwen3-coder:free"
 # base_branch = "develop"
 # link_paths = ["vendor", ".env"]
 # deny_read = [".env", "config/database.php"]

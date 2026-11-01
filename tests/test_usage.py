@@ -89,7 +89,7 @@ class MeteredWorker(FakeOpencode):
         super().__init__()
         self.total = Usage(cost_usd=0.0)
 
-    async def prompt(self, session, directory, text, timeout, on_denied=None):
+    async def prompt(self, session, directory, text, timeout, on_denied=None, model_name=None):
         self.total = Usage(self.total.input + 1000, self.total.output + 100, 0, 0, (self.total.cost_usd or 0) + 0.02)
         return await super().prompt(session, directory, text, timeout, on_denied)
 

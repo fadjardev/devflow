@@ -19,6 +19,7 @@ record the difference from the session's previous total (`UsageDB.delta`).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -143,4 +144,52 @@ def opencode_limit(error: dict[str, Any] | None) -> Limit | None:
         if retry and str(retry).isdigit():
             resets = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=int(retry))
         return Limit("opencode", True, f"provider limit: {message[:120] or 'HTTP 429'}", resets)
+    return None
+
+
+def opencode_usage_v2(session: dict[str, Any]) -> Usage:
+    """A v2 session's running totals (GET /api/session/{id}): `tokens` and `cost`."""
+    t = session.get("tokens") or {}
+    cache = t.get("cache") or {}
+    m = session.get("model") or {}
+    cost = session.get("cost")
+    return Usage(int(t.get("input") or 0), int(t.get("output") or 0) + int(t.get("reasoning") or 0),
+                 int(cache.get("read") or 0), int(cache.get("write") or 0),
+                 float(cost) if isinstance(cost, int | float) else None,
+                 "/".join(x for x in (m.get("providerID"), m.get("id")) if x))
+
+
+def opencode_limit_v2(error: dict[str, Any] | None) -> Limit | None:
+    """A v2 structured error (`{type, message, status, retryAfterMs}`): HTTP 429, or a
+    quota/credit/rate message, with the reset time when the provider gave one."""
+    if not error:
+        return None
+    status = error.get("status")
+    message = str(error.get("message") or "")
+    if status == 429 or _QUOTA.search(message) or "cooling down" in message.lower():
+        after = error.get("retryAfterMs")
+        resets = (dt.datetime.now(dt.UTC) + dt.timedelta(milliseconds=int(after))
+                  if isinstance(after, int) and after > 0 else _reset_in_body(error))
+        return Limit("opencode", True, f"provider limit: {message[:120] or 'HTTP 429'}", resets)
+    return None
+
+
+def _reset_in_body(error: dict[str, Any]) -> dt.datetime | None:
+    """A gateway's own reset time, from the raw response body opencode keeps
+    (OmniRoute: `{"error": {"reset_at": ISO-8601, "retry_after": seconds}}`)."""
+    body = (error.get("response") or {}).get("body")
+    try:
+        inner = json.loads(body).get("error") or {} if isinstance(body, str) else {}
+    except (ValueError, AttributeError):
+        return None
+    at = inner.get("reset_at")
+    if isinstance(at, str):
+        try:
+            when = dt.datetime.fromisoformat(at.replace("Z", "+00:00"))
+            return when if when.tzinfo else when.replace(tzinfo=dt.UTC)
+        except ValueError:
+            pass
+    after = inner.get("retry_after")
+    if isinstance(after, (int, float)) and after > 0:
+        return dt.datetime.now(dt.UTC) + dt.timedelta(seconds=after)
     return None

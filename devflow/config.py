@@ -15,7 +15,9 @@ somebody else's machine.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
+import re
 import tomllib
 import zoneinfo
 from dataclasses import dataclass, field
@@ -99,11 +101,43 @@ class BudgetConfig:
     auto_resume: bool = False  # resume tasks a provider limit stopped once it resets
 
 
+FREE_SUFFIX = ":free"  # how OpenRouter and the gateways that pass its ids on name a free-tier model
+
+
+@dataclass(frozen=True)
+class GatewayConfig:
+    """An OpenAI-compatible AI gateway (OmniRoute, 9Router, LiteLLM, OpenRouter) that devflow
+    registers as an opencode provider for the worker. The key stays in the environment."""
+    base_url: str                       # e.g. http://127.0.0.1:20128/v1
+    models: list[str]                   # model ids as the gateway names them; the first is the default
+    provider_id: str = "gateway"        # the worker model is "<provider_id>/<model>"
+    name: str = "AI gateway"
+    api_key_env: str = ""               # the environment variable that holds the key, if one is needed
+    free_only: bool = False             # every worker model must be a free tier (ADR 0012)
+    free_combos: list[str] = field(default_factory=list)  # gateway combos whose models are checked to be free
+
+    def model(self, model_id: str) -> str:
+        return f"{self.provider_id}/{model_id}"
+
+    def allowed(self, worker_model: str) -> bool:
+        """With free_only: "<provider_id>/<id>" where id ends in ":free" or is a listed combo."""
+        provider, _, model_id = worker_model.partition("/")
+        return provider == self.provider_id and (model_id.endswith(FREE_SUFFIX) or model_id in self.free_combos)
+
+
+@dataclass(frozen=True)
+class DashboardConfig:
+    """The local web dashboard (ADR 0011). It only ever listens on 127.0.0.1."""
+    enabled: bool = False   # also start it with `devflow run` (beside Telegram)
+    port: int = 8765
+
+
 @dataclass(frozen=True)
 class Project:
     """One `[projects.<name>]` entry. Unset overrides fall back to the global setting."""
     name: str
     path: Path
+    opencode_model: str | None = None
     base_branch: str | None = None
     link_paths: list[str] | None = None
     deny_read: list[str] | None = None
@@ -140,6 +174,8 @@ class Settings:
     share_code_via_telegram: bool = True  # False: /diff sends a summary and a local path instead
     checks: CheckConfig = field(default_factory=lambda: CheckConfig(preset="php"))
     budget: BudgetConfig = field(default_factory=BudgetConfig)
+    gateway: GatewayConfig | None = None  # the worker's models through an AI gateway
+    dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     registry: dict[str, Project] | None = None  # None: the projects are the vault's notes (legacy)
     vault_is_own: bool = False  # no vault configured: notes live in the runtime folder
     source: str = ""  # where these settings came from, for doctor
@@ -308,6 +344,66 @@ def _budget(top: _Table) -> BudgetConfig:
     return BudgetConfig(caps, backends, sorted(float(w) for w in warn_at), on_exceed, tz, auto)
 
 
+_PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,40}$")
+_ENV_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,100}$")
+
+
+def _gateway(top: _Table) -> GatewayConfig | None:
+    if not top.data.get("gateway"):  # absent, or an empty table with every key commented out
+        top.used.add("gateway")
+        return None
+    g = top.table("gateway")
+    url = g.text("base_url").rstrip("/")
+    if not url.startswith(("http://", "https://")):
+        raise ConfigError("gateway.base_url must be an http(s) URL, e.g. \"http://127.0.0.1:20128/v1\"")
+    models = g.texts("models", []) or []
+    if not models or not all(m.strip() for m in models):
+        raise ConfigError("gateway.models must list at least one model id")
+    provider_id = g.text("provider_id", "gateway")
+    if not _PROVIDER_RE.match(provider_id):
+        raise ConfigError(f"gateway.provider_id must be lowercase letters, digits, - or _, not {provider_id!r}")
+    key_env = g.text("api_key_env")
+    if key_env and not _ENV_RE.match(key_env):
+        raise ConfigError(f"gateway.api_key_env is the NAME of an environment variable, not {key_env!r}")
+    free_only = g.flag("free_only", False)
+    free_combos = g.texts("free_combos", []) or []
+    if free_combos and not free_only:
+        raise ConfigError("gateway.free_combos only means something with free_only = true")
+    cfg = GatewayConfig(base_url=url, models=models, provider_id=provider_id, name=g.text("name", "AI gateway"),
+                        api_key_env=key_env, free_only=free_only, free_combos=free_combos)
+    g.done()
+    if free_only:
+        paid = [m for m in models if not cfg.allowed(cfg.model(m))]
+        if paid:
+            raise ConfigError(f"gateway.free_only: not a free model ({', '.join(paid)}); a free model id ends in "
+                              f"\"{FREE_SUFFIX}\", and a combo must be listed in gateway.free_combos")
+    return cfg
+
+
+def _check_free(settings: Settings) -> None:
+    """free_only: the worker model of every project must be one of the gateway's free ones."""
+    gw = settings.gateway
+    if gw is None or not gw.free_only:
+        return
+    names = ["(global)"] + list(settings.registry or {})
+    for name in names:
+        model = settings.opencode_model if name == "(global)" else settings.for_project(name).opencode_model
+        if not gw.allowed(model):
+            where = "agents.opencode_model" if name == "(global)" else f"projects.{name}.opencode_model"
+            raise ConfigError(f"{where} = {model!r} is not allowed with gateway.free_only: use "
+                              f"\"{gw.provider_id}/<model>{FREE_SUFFIX}\" or a combo from gateway.free_combos")
+
+
+def _dashboard(top: _Table) -> DashboardConfig:
+    d = top.table("dashboard")
+    port = d.number("port", 8765)
+    if not 1024 <= port <= 65535:
+        raise ConfigError(f"dashboard.port must be between 1024 and 65535, not {port}")
+    cfg = DashboardConfig(enabled=d.flag("enabled", False), port=port)
+    d.done()
+    return cfg
+
+
 def from_toml(path: Path) -> Settings:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
@@ -348,6 +444,7 @@ def from_toml(path: Path) -> Settings:
             raise ConfigError(f"{where}.path is required")
         registry[name] = Project(
             name=name, path=p,
+            opencode_model=entry._get("opencode_model", str, None),
             base_branch=entry._get("base_branch", str, None),
             link_paths=entry.texts("link_paths", None),
             deny_read=entry.texts("deny_read", None),
@@ -357,6 +454,9 @@ def from_toml(path: Path) -> Settings:
         )
         entry.done()
     projects.done()
+
+    gateway = _gateway(top)
+    model = agents.text("opencode_model") or (gateway.model(gateway.models[0]) if gateway else "")
 
     if runtime is not None and not os.environ.get("DEVFLOW_RUNTIME"):
         os.environ["DEVFLOW_RUNTIME"] = str(runtime)
@@ -375,7 +475,7 @@ def from_toml(path: Path) -> Settings:
         max_workers=agents.number("max_workers", 3),
         max_bounces=agents.number("max_bounces", 2),
         opencode_url=agents.text("opencode_url", "http://127.0.0.1:4096").rstrip("/"),
-        opencode_model=agents.text("opencode_model"),
+        opencode_model=model,
         claude_model=agents.text("claude_model"),
         base_branch=git.text("base_branch"),
         git_remote=git.text("remote", "origin"),
@@ -390,16 +490,38 @@ def from_toml(path: Path) -> Settings:
         share_code_via_telegram=safety.flag("share_code_via_telegram", True),
         checks=_checks(top.table("checks")),
         budget=_budget(top),
+        gateway=gateway,
+        dashboard=_dashboard(top),
         registry=registry,
         source=str(path),
     )
     for t in (agents, git, safety, top):
         t.done()
+    _check_free(settings)
     if provider not in ("none", "devcrate"):
         raise ConfigError(f"vhost.provider must be none or devcrate, not {provider!r}")
     if provider == "devcrate" and devcrate is None:
         raise ConfigError("vhost.devcrate_root is required with provider = \"devcrate\"")
     return settings
+
+
+_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def append_project(config_file: Path, name: str, checkout: Path) -> Settings:
+    """Add `[projects.<name>]` to the end of a devflow.toml and return the settings it now gives.
+    The file is only appended to, so comments and layout stay; if the result doesn't load, the
+    file is put back as it was."""
+    before = config_file.read_text(encoding="utf-8")
+    key = name if _BARE_KEY.match(name) else json.dumps(name)
+    path = json.dumps(checkout.resolve().as_posix())  # a JSON string is a valid TOML basic string
+    sep = "" if before.endswith("\n") or not before else "\n"
+    config_file.write_text(f"{before}{sep}\n[projects.{key}]\npath = {path}\n", encoding="utf-8")
+    try:
+        return from_toml(config_file)
+    except ConfigError:
+        config_file.write_text(before, encoding="utf-8")
+        raise
 
 
 def load(path: Path | None = None) -> Settings:
