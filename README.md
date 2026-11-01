@@ -251,6 +251,78 @@ limit, the task stops with the reset time it reported, and with `auto_resume`
 it continues by itself afterwards. devflow builds only on documented fields
 ([ADR 0007](docs/adr/0007-claude-code-limit-fields.md)).
 
+### Worker models through an AI gateway
+
+The worker can use any OpenAI-compatible gateway (OmniRoute, 9Router, LiteLLM,
+or OpenRouter itself) to reach many models, free tiers included, with the
+gateway's own fallback when one provider's quota runs out. devflow registers
+it as an opencode provider in the runtime `opencode.json`; the planner and the
+reviewer stay on Claude Code ([ADR 0010](docs/adr/0010-worker-through-an-ai-gateway.md)).
+
+```toml
+[gateway]
+base_url = "http://127.0.0.1:20128/v1"
+api_key_env = "DEVFLOW_GATEWAY_KEY"   # the variable's name; the key stays in the environment
+models = ["devflow-worker", "qwen/qwen3-coder:free"]   # the first is the worker default
+
+[projects.shop]
+opencode_model = "gateway/qwen/qwen3-coder:free"   # per project
+```
+
+To make sure the worker never uses a paid model, add `free_only = true`:
+every worker model must then end in `:free` or be a combo listed in
+`free_combos`, whose entries devflow reads from the gateway (OmniRoute's
+`/combos`) and checks before every worker run. Anything else, or a gateway it
+can't ask, stops the task before a prompt is sent
+([ADR 0012](docs/adr/0012-free-tier-only-worker.md)). Planning and review
+still run on Claude Code.
+
+```toml
+[gateway]
+models = ["devflow-worker"]
+free_only = true
+free_combos = ["devflow-worker"]
+```
+
+`devflow doctor` checks that the gateway answers and serves those models. A
+gateway that has run out of every fallback answers 429, which stops the task
+with the reset time like any other provider limit. Free models report no cost,
+so token caps are the useful budget there.
+
+## Local dashboard
+
+The same workflow in a browser, on this machine only:
+
+- **Board**: what needs you (tasks at a gate or blocked), then the pipeline
+  drawn as a track with its two gates;
+- **Task**: spec, review, verification, diff and screenshot, with **Approve /
+  Send back / Retry / Catch up with base / Stop task**;
+- **New task** and **Ask**;
+- **Usage**: tokens and cost per day, backend, role and model, against your budgets;
+- **Agents & models**: Claude Code and opencode (installed, version, the
+  opencode server, last run, today's use, limits in force), the gateway's
+  health, the free-tier check, and which worker models answer right now (each
+  gets one short request; combos are expanded into their models; under
+  `free_only`, paid models are never called);
+- **Projects**: the registry, and **Add a project** from the git checkouts
+  found next to your projects folder (or any path). It is appended to
+  `devflow.toml` and usable at once, without a restart;
+- **Logs**, and **Help** on how to use devflow.
+
+```sh
+devflow dashboard           # the dashboard alone; no Telegram needed
+devflow dashboard --url     # print the login link again
+devflow run --dashboard     # Telegram and the dashboard in one process
+```
+
+Set `[dashboard] enabled = true` to make `devflow run` start it every time.
+It listens on `127.0.0.1` only (port 8765 by default). The login link printed
+at start carries a random token, kept in `dashboard.token` in the runtime
+folder; requests with another `Host` header (DNS rebinding), without the
+session cookie, or a POST without the CSRF token or from another origin are
+refused ([ADR 0011](docs/adr/0011-local-dashboard.md)). Both front ends drive
+the same tasks and both get every notification.
+
 ## Working alongside a team
 
 devflow assumes other people push to the same repository:
@@ -273,9 +345,11 @@ keeps working on the last-fetched refs and says so in every message.
 
 - **Windows, Linux or macOS**, with **Python 3.11+** and **git**.
 - **[Claude Code](https://claude.com/claude-code)** (`claude` on `PATH`, logged in)
-  and **[opencode](https://opencode.ai)** (`opencode` on `PATH`, with a provider
-  configured).
-- **A Telegram bot**: create one with [@BotFather](https://t.me/BotFather); get your
+  and **[opencode](https://opencode.ai)** 1.x (`opencode-ai`) or 2.x
+  (`@opencode/cli`), `opencode` on `PATH`, with a provider configured or a
+  `[gateway]`. devflow detects which API the server speaks
+  ([ADR 0013](docs/adr/0013-opencode-v2-api.md)).
+- **A Telegram bot** (optional with `devflow dashboard`): create one with [@BotFather](https://t.me/BotFather); get your
   numeric chat id from [@userinfobot](https://t.me/userinfobot).
 - **Optional: a notes vault** (plain Markdown; [Obsidian](https://obsidian.md)
   works well). With one, devflow writes its task notes, requests and project
@@ -343,8 +417,8 @@ base_branch = "develop"    # default: the remote's default branch
 worker_shell_allow = ["npm run lint"]
 ```
 
-Every `[projects.<name>]` table can override `base_branch`, `link_paths`,
-`deny_read`, `worker_shell_allow` and `check_env_allow`. An unknown or
+Every `[projects.<name>]` table can override `opencode_model`, `base_branch`,
+`link_paths`, `deny_read`, `worker_shell_allow` and `check_env_allow`. An unknown or
 mistyped setting stops devflow with an error that names it.
 
 **Coming from `.env`?** Without a `devflow.toml`, devflow still reads `.env`
@@ -405,7 +479,10 @@ cause and `/retry`.
 
 | Path | Does |
 | --- | --- |
-| `devflow/cli.py` | The `devflow` command: `run`, `init`, `migrate-env`, `doctor` |
+| `devflow/cli.py` | The `devflow` command: `run`, `dashboard`, `init`, `migrate-env`, `doctor` |
+| `devflow/runtime.py` | The one Flow both front ends drive, its notifiers and background loops |
+| `devflow/web/` | The local dashboard: routes, login token and CSRF guard, templates, htmx |
+| `devflow/gateway.py` | The AI gateway's health and model list, for `doctor` and the dashboard |
 | `devflow/config.py` | `devflow.toml` and the project registry; the legacy `.env` |
 | `devflow/bot.py` | Telegram commands, chat and user allow-lists, `/ask` follow-ups by reply |
 | `devflow/pipeline.py` | The phases: plan → gate 1 → code → verify → review → gate 2 → close; `/ask` |

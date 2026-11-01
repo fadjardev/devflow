@@ -121,6 +121,10 @@ why the change is safe:
 - the devflow-mcp tools, path checks and state transitions
   (`devflow/mcp_server.py`, `devflow/vault.py`, `devflow/tasks.py`);
 - the Telegram chat allow-list (`devflow/bot.py`);
+- the dashboard's login, Host, Origin and CSRF checks, its bind address, and
+  how it renders agent text (`devflow/web/auth.py`, `devflow/web/server.py`);
+- how the gateway key is referenced in the runtime opencode config
+  (`devflow/config.py`, `devflow/opencode.py`);
 - anything that runs git, or links or removes files in a worktree
   (`devflow/worktree.py`, `devflow/sync.py`).
 

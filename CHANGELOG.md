@@ -7,6 +7,37 @@ things, and the changelog says how).
 
 ## [Unreleased]
 
+### Added
+
+- `[gateway]`: the worker's models through an OpenAI-compatible AI gateway
+  (OmniRoute, 9Router, LiteLLM, OpenRouter), registered as an opencode
+  provider with the key kept in the environment; `devflow doctor` checks it.
+  Projects can set their own `opencode_model` (ADR 0010).
+- `[gateway] free_only`: refuse any worker model that isn't a free tier, at
+  load and before every worker run; combos in `free_combos` are checked entry
+  by entry on the gateway, failing closed (ADR 0012).
+- A local web dashboard: `devflow dashboard` (no Telegram needed) or
+  `devflow run --dashboard`. Board, task detail with gate actions, diff,
+  screenshot, new task, ask, usage, projects, gateway and logs, on 127.0.0.1
+  behind a login token, a Host check and CSRF tokens (ADR 0011). The Models
+  page checks which worker models answer right now and shows the state of
+  Claude Code and opencode; projects can be added from the dashboard without a
+  restart; Help explains the workflow.
+
+- The worker runs on opencode 2.x as well as 1.x: devflow detects the server's
+  API (routes under `/api`, password auth, asynchronous prompts, v2-shaped
+  permissions) and translates its ruleset, still denying everything outside
+  the worktree (ADR 0013).
+- On opencode 2.x a worker stuck retrying a rate-limited model is stopped after
+  3 attempts and reported as a limit, with the gateway's reset time (at least
+  15 minutes), so the task pauses and resumes instead of timing out after 45
+  minutes and being blocked.
+
+### Changed
+
+- `devflow run` without a Telegram token now says to use `devflow dashboard`.
+- Startup moved from the bot into `devflow/runtime.py`, shared by both front ends.
+
 ## [0.2.0] - 2026-10-30
 
 The first public release. devflow now runs on Windows, Linux and macOS, with

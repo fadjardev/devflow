@@ -106,6 +106,43 @@ The task runs with your user's environment, so `claude`, `opencode` and
 Running it as a Windows service (NSSM, `sc.exe`) works too, but the service
 must log on as your account, not LocalSystem.
 
+## The dashboard under a service
+
+To run devflow with the dashboard only (no Telegram), use `dashboard`
+instead of `run` as the argument in the examples above. To run both, use
+`run --dashboard`, or set `[dashboard] enabled = true` and keep `run`.
+
+The login link is printed to the service's output, which you may not see.
+Print it again at any time with:
+
+```sh
+devflow dashboard --url
+```
+
+The token lives in `dashboard.token` in the runtime folder and survives
+restarts, so a bookmark of the link keeps working. Delete the file and
+restart devflow to issue a new one (and log out every browser).
+
+## An AI gateway beside devflow
+
+With a `[gateway]` table, the worker's model calls go to the gateway, so the
+gateway must be up before tasks reach the coding phase. Run it as its own
+service, as your user, bound to 127.0.0.1, with the same pattern as above:
+on Windows a second scheduled task that starts the gateway at logon; on Linux
+a second systemd user unit, with `Before=devflow.service` or devflow's unit
+having `After=` and `Wants=` the gateway's; on macOS a second launchd agent.
+
+The key devflow reads (`gateway.api_key_env`, e.g. `DEVFLOW_GATEWAY_KEY`)
+must be in devflow's environment: a user environment variable on Windows, the
+`EnvironmentFile` on systemd, `EnvironmentVariables` in the launchd plist.
+`devflow doctor` reports a gateway that doesn't answer, a model it doesn't
+serve, and a key variable that isn't set.
+
+devflow registers the gateway only in the `opencode serve` it starts itself.
+If an opencode server is already listening on `agents.opencode_url` when
+devflow starts, devflow uses it as it is; `doctor` points this out. Stop that
+server, or add the gateway provider to its own opencode config.
+
 ## After a restart
 
 Tasks that were in the middle of a phase are parked as `blocked`

@@ -287,6 +287,11 @@ is intended to stay identical.
 | 0006 | Usage storage in SQLite before tasks move there (v0.3) |
 | 0007 | Claude Code limit/reset fields: what the CLI documents and outputs |
 | 0008 | Platform dirs via `platformdirs` |
+| 0009 | Published as `devflow-bot`; the command stays `devflow` |
+| 0010 | The worker's models through an AI gateway ([ADR](adr/0010-worker-through-an-ai-gateway.md)) |
+| 0011 | A local web dashboard beside Telegram ([ADR](adr/0011-local-dashboard.md)) |
+| 0012 | Free-tier-only worker models ([ADR](adr/0012-free-tier-only-worker.md)) |
+| 0013 | Speak both opencode server APIs ([ADR](adr/0013-opencode-v2-api.md)) |
 
 ## 8. Risks
 
@@ -300,3 +305,54 @@ is intended to stay identical.
   gaps go into `docs/security.md`.
 - **Claude CLI JSON fields** for limits are not a stable contract; limit
   detection degrades to "generic error" when fields are missing.
+
+## 9. After v0.2: AI gateway and local dashboard
+
+Two front ends now drive one `Flow`, and the worker can reach its models
+through an AI gateway. Nothing in the phases, the state machine or the safety
+model changed: both additions sit at the edges.
+
+| Module | Contents |
+| --- | --- |
+| `runtime.py` | `Runtime`: builds the one `Flow`, runs `recover()` and the auto-resume loop, owns a `FanoutNotifier` that sends every message to every front end (one failing doesn't stop the others) |
+| `bot.py` | Telegram only: builds a `Runtime`, adds `TelegramNotifier`, optionally starts the dashboard in the same event loop |
+| `web/server.py` | Starlette routes, Jinja2 pages, `Dashboard` (reads tasks and usage, calls `Flow` for every action), `start_embedded` (inside the bot's loop) and `run_standalone` (`devflow dashboard`) |
+| `web/auth.py` | `Guard` middleware: Host check, login token cookie, CSRF on POST, Origin check |
+| `web/events.py` | `WebNotifier`: the last 300 notifications in memory, tagged with their task id |
+| `web/templates/`, `web/static/` | Pages and CSS; htmx vendored, no CDN, no build step |
+| `gateway.py` | `GET <base_url>/models` health check for `doctor` and the dashboard; with `free_only`, `GET <base_url>/combos` to check a combo holds free models only (`ensure_free`, called by `opencode.Client.prompt`); `probe_all` sends each worker model (combos expanded) one short request for the dashboard's Models page |
+| `config.py` | `GatewayConfig` (`[gateway]`), `DashboardConfig` (`[dashboard]`), per-project `opencode_model` |
+| `opencode.py` | `config_file()` registers the gateway as an `@ai-sdk/openai-compatible` provider; `prompt()` takes the project's model |
+
+```mermaid
+flowchart LR
+  cli -- run --> bot
+  cli -- dashboard --> web[web.server]
+  bot --> runtime
+  bot -. --dashboard .-> web
+  web --> runtime
+  runtime --> flow[pipeline.Flow]
+  runtime --> fan[FanoutNotifier]
+  fan --> tg[TelegramNotifier] & wn[WebNotifier]
+  flow --> fan
+  flow --> opencode
+  opencode -- runtime/opencode.json --> oc[opencode serve]
+  oc -- OpenAI-compatible --> gw[(AI gateway)]
+  gw --> providers[(free and paid providers)]
+  web & cli --> gateway[gateway.py] -.-> gw
+```
+
+The dashboard reads task notes (`TaskStore`) and the usage database directly
+and calls `Flow` methods for everything that changes state: `new_task`,
+`approve`, `reject`, `retry`, `refresh`, `stop`, `ask`. `Flow.at_gate()` and
+`Flow.running()` are shared with the Telegram `/status`, so both front ends
+agree on what waits for a human.
+
+Additions to the storage table (section 4):
+
+| What | Where |
+| --- | --- |
+| Dashboard login token | `<runtime>/dashboard.token` (owner-only) |
+| Gateway provider for the worker | `<runtime>/opencode.json`, rewritten each time devflow starts `opencode serve`; the key as an `{env:NAME}` reference |
+| Dashboard notifications and `/ask` conversations | memory only, gone at a restart |
+

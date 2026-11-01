@@ -34,6 +34,17 @@ attempts the bypass.
 | Verification | Lint and test commands get a minimal environment (`CHECK_ENV_ALLOW` adds names), file names as full paths, a timeout that kills the process tree | `platform.run`, `verify.py` | S9 |
 | Local files | Note locks in the runtime folder; the runtime folder created owner-only; `doctor` flags a readable `.env` or runtime folder, `doctor --fix` restricts them | `security.py`, `vault.lock_dir` | S10 |
 | Notes Claude reads | A copy of the project's notes and its tasks, not the whole vault | `tasks.copy_view` | S12 |
+| Dashboard reach | Listens on `127.0.0.1` only, never another interface | `web.server.HOST` | — |
+| Dashboard login | A random token in `<runtime>/dashboard.token` (owner-only), exchanged once for an HttpOnly, SameSite=Strict cookie; every page but `/login` and `/static/` needs it | `web.auth.Guard` | — |
+| DNS rebinding | Requests whose `Host` isn't `127.0.0.1:<port>` or `localhost:<port>` are refused | `web.auth.Guard` | — |
+| Cross-site requests | Every POST needs a CSRF token derived from the login token (header or form field); a POST with a foreign `Origin` is refused | `web.auth.Guard` | — |
+| Dashboard actions | Every button calls the same `Flow` method as the Telegram command, so the dashboard opens no way past a gate the bot doesn't have | `web.server.Dashboard` | — |
+| Dashboard config writes | The only file the dashboard writes is the config, and only to append `[projects.<name>]` for an existing git checkout with a valid name; a result that doesn't load is rolled back | `web.server.Dashboard.add_project`, `config.append_project` | — |
+| Dashboard output | Notes and agent text are rendered as Markdown with raw HTML off and secrets masked; diffs and logs are masked too; the login token is added to the redaction list | `web.server.markdown`, `redact.py` | — |
+| Free-tier worker | With `free_only`, a worker model must end in `:free` or be a listed combo whose every entry does; checked at load and before every worker run, failing closed when the gateway can't be asked | `config._check_free`, `gateway.ensure_free`, `opencode.Client.prompt` | — |
+| opencode server | devflow starts `opencode serve` on 127.0.0.1; on opencode 2.x with a password of its own (`<runtime>/opencode.password`, owner-only), and a v2 server it has no password for is refused | `opencode.Client` | — |
+| Worker on opencode 2.x | The same ruleset, translated (`shell`, `subagent`); `external_directory`, which v2 allows by default, is denied explicitly, and so are `execute` and image generation | `opencode.ruleset_v2` | — |
+| Gateway key | Never written by devflow: the runtime `opencode.json` holds an `{env:NAME}` reference; `gateway.api_key_env` must be a variable name, not a value | `config._gateway`, `opencode.gateway_provider` | — |
 
 ## What is not protected
 
@@ -74,6 +85,21 @@ These are real limits. Decide with them in mind.
 - **The bot token is the key.** Anyone holding it can read what the bot sends
   and impersonate it; only the chat and user filters stop them from commanding
   it. Keep `.env` private (`doctor` checks).
+- **The dashboard trusts your OS user.** Anyone who can read your runtime
+  folder can read `dashboard.token` and use the dashboard, as they could read
+  the vault, the config and the bot token. The login link is printed to the
+  terminal (or the service's output) at start; treat that output like the
+  token. There are no separate dashboard users or roles.
+- **Adding a project from the dashboard** lets the agents read that
+  repository, as editing the config would. Only a logged-in dashboard session
+  (token and CSRF) can do it.
+- **Other local processes** running as you can reach 127.0.0.1 like any
+  program can; the token, not the network, keeps them out.
+- **The AI gateway sees the worker's prompts and code**, and so does every
+  provider it routes to. Free tiers often come with weaker data terms (some
+  providers may log prompts or use them for training): check each provider's
+  policy before routing a private repository through it. The gateway itself
+  is software you run and must keep updated; bind it to 127.0.0.1.
 - **Claude Code and opencode themselves** are trusted. A compromised CLI or
   model provider is out of scope.
 
@@ -93,6 +119,10 @@ run `python -m devflow doctor --fix`.
 ## Security testing
 
 - `tests/test_security.py` attempts each bypass above with fake agents.
+- `tests/test_web.py` tries the dashboard without the cookie, with another
+  Host header, without or with a wrong CSRF token, from another Origin, and
+  with HTML in agent text; `tests/test_gateway.py` checks no key value reaches
+  the runtime `opencode.json`.
 - CI runs gitleaks on the full history, `pip-audit` on the dependencies, and
   Semgrep (`p/python`, `p/secrets`) on every pull request and weekly.
 - Changes to the files listed under *Safety changes* in
