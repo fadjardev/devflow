@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<h1>Logs{% if task %} for <code>{{ task }}</code>{% endif %}</h1>
+<div class="tabs">
+  <a href="/logs?show=errors{% if task %}&task={{ task }}{% endif %}" {% if show == "errors" %}aria-current="page"{% endif %}>Warnings and errors</a>
+  <a href="/logs?show=all{% if task %}&task={{ task }}{% endif %}" {% if show == "all" %}aria-current="page"{% endif %}>Everything</a>
+  {% if task %}<a href="/logs?show={{ show }}">All tasks</a>{% endif %}
+  <span class="muted small">Newest first, updated every 5 seconds</span>
+</div>
+<div id="logs" hx-get="/logs?show={{ show }}{% if task %}&task={{ task }}{% endif %}" hx-trigger="every 5s" hx-select="#logs" hx-swap="outerHTML">
+{% for e in entries %}<pre class="log {{ 'bad' if ' ERROR ' in e[:40] else 'warn' if 'WARNING' in e[:40] else '' }}">{{ e }}</pre>
+{% else %}<p class="muted">Nothing logged{% if show == "errors" %}: no warnings or errors{% endif %}.</p>{% endfor %}
+</div>
+{% endblock %}

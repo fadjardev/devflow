@@ -1,0 +1,9 @@
+<ol class="feed">
+{% for e in events %}
+  <li><time datetime="{{ e.ts.isoformat() }}">{{ e.ts.strftime("%d %b %H:%M") }}</time>
+    <div class="ev">{{ e.text | md }}{% if e.photo %}<a href="/tasks/{{ e.task }}">Screenshot</a>{% endif %}</div>
+  </li>
+{% else %}
+  <li class="none">No messages yet. They appear here as tasks move through the pipeline.</li>
+{% endfor %}
+</ol>

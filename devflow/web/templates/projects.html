@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<h1>Projects</h1>
+<p class="lede">From <code>{{ settings.source }}</code>. Add a project below; to change one, edit that file and restart devflow.</p>
+<div class="table-wrap" id="project-table" hx-get="/projects" hx-trigger="devflow-changed from:body" hx-select="#project-table" hx-swap="outerHTML">
+<table>
+  <thead><tr><th scope="col">Project</th><th scope="col">Checkout</th><th scope="col">Base branch</th><th scope="col">Worker model</th><th scope="col">Checks after coding</th><th scope="col">Active task</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td><strong>{{ r.name }}</strong><br><a class="small" href="/tasks/new?project={{ r.name | urlencode }}">New task</a></td>
+    <td>{% if r.error %}<span class="tag bad">{{ r.error }}</span>{% else %}<code>{{ r.path }}</code>{% endif %}</td>
+    <td>{{ r.base }}</td>
+    <td><code>{{ r.model }}</code></td>
+    <td>{% for c in r.checks %}<code>{{ c }}</code>{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">none</span>{% endfor %}</td>
+    <td>{% if r.task %}<a href="/tasks/{{ r.task }}"><code>{{ r.task }}</code></a>{% else %}<span class="muted">none</span>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="6" class="muted">No projects yet. Add one below.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if editable %}
+<h2 id="add">Add a project</h2>
+<p class="lede">It is added to the end of the config file and appears in New task and Ask at once. The agents can then read that repository.</p>
+<form class="form" hx-post="/projects/add" hx-target="#flash" hx-disabled-elt="find button">
+  <label>Folder of the git checkout
+    <span class="hint">{% if candidates %}Pick one of the {{ candidates | length }} repositories found next to your projects folder, or type a full path.{% else %}Type the full path, for example D:/work-dev/Github/shop.{% endif %}</span>
+    <input name="path" list="repo-list" required autocomplete="off" placeholder="D:/work-dev/Github/shop">
+    <datalist id="repo-list">{% for name, path in candidates %}<option value="{{ path }}">{{ name }}</option>{% endfor %}</datalist>
+  </label>
+  <label>Name
+    <span class="hint">Optional; the folder name is used when empty. It is what you type after /task and /ask.</span>
+    <input name="name" autocomplete="off" placeholder="shop">
+  </label>
+  <div><button class="primary"><span class="when-idle">Add project</span><span class="when-busy">Adding…</span></button></div>
+</form>
+<p class="small muted">Lint and test commands, the base branch and a worker model per project go in the config file, as in <code>devflow.example.toml</code>.</p>
+{% else %}
+<p class="note warn">devflow reads its projects from the vault's notes (legacy mode), so they can't be added here. Run <code>devflow migrate-env</code> to switch to a config file.</p>
+{% endif %}
+{% endblock %}

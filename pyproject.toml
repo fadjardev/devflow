@@ -29,6 +29,10 @@ dependencies = [
     "playwright>=1.45",
     "python-dotenv>=1",
     "platformdirs>=4",
+    "starlette>=0.40",   # the dashboard (already needed by mcp)
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "markdown-it-py>=3",
     "tzdata; sys_platform == 'win32'",  # zoneinfo has no time zone database of its own there
 ]
 
@@ -49,10 +53,11 @@ build-backend = "setuptools.build_meta"
 devflow = "devflow.cli:main"
 
 [tool.setuptools]
-packages = ["devflow", "devflow.checks", "devflow.usage", "devflow.vhosts"]
+packages = ["devflow", "devflow.checks", "devflow.usage", "devflow.vhosts", "devflow.web"]
 
 [tool.setuptools.package-data]
 devflow = ["prompts/*.md"]
+"devflow.web" = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -75,18 +80,21 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = [
     "devflow.__main__",
+    "devflow.agents",
     "devflow.checks",
     "devflow.checks.*",
     "devflow.claude",
     "devflow.cli",
     "devflow.config",
     "devflow.fmt",
+    "devflow.gateway",
     "devflow.gitsafe",
     "devflow.logs",
     "devflow.mcp_server",
     "devflow.platform",
     "devflow.projects",
     "devflow.redact",
+    "devflow.runtime",
     "devflow.security",
     "devflow.sync",
     "devflow.tasks",

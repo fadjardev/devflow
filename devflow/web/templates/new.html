@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}New task{% endblock %}
+{% block content %}
+<h1>New task</h1>
+<p class="lede">Claude reads the project and writes a plan. Nothing is coded until you approve that plan at gate 1.</p>
+<form class="form" hx-post="/tasks/new" hx-target="#flash" hx-disabled-elt="find button">
+  <label>Project
+    <select name="project" required>
+      <option value="">Choose a project</option>
+      {% for n in names %}<option {% if n == preset %}selected{% endif %}>{{ n }}</option>{% endfor %}
+    </select>
+    <span class="hint">Not in the list? <a href="/projects#add">Add the project</a> first.</span>
+  </label>
+  <label>What should change?
+    <span class="hint">Describe the result you want, as you would to a colleague. For a bug, say what happens and what should happen instead.</span>
+    <textarea name="request" rows="8" required placeholder="Add sorting by date to the orders table"></textarea>
+  </label>
+  <div><button class="primary"><span class="when-idle">Start planning</span><span class="when-busy">Starting…</span></button></div>
+</form>
+{% endblock %}

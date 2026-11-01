@@ -1,0 +1,25 @@
+<div id="probes">
+{% set up = probes | selectattr("state", "equalto", "online") | list %}
+{% set usable = probes | rejectattr("state", "equalto", "skipped") | list %}
+<p class="lede">{% if probed_at %}{{ up | length }} of {{ usable | length }} models answered at {{ probed_at.strftime("%H:%M:%S") }}. Each check sends every model one short request, so it uses a little of each free quota.{% else %}Not checked yet.{% endif %}</p>
+{% if probes %}
+<div class="table-wrap">
+<table>
+  <thead><tr><th scope="col">Model</th><th scope="col">Status</th><th scope="col" class="num">Reply time</th><th scope="col">Details</th></tr></thead>
+  <tbody>
+  {% for combo, rows in probes | groupby("combo") %}
+    {% if combo %}<tr class="group"><td colspan="4">Combo <code>{{ combo }}</code>, tried in this order</td></tr>{% endif %}
+    {% for p in rows %}
+    <tr>
+      <td><code>{{ p.model }}</code></td>
+      <td><span class="tag {{ p.state }}">{{ {"online": "online", "limited": "rate limited", "refused": "refused", "offline": "offline", "skipped": "not checked"}[p.state] }}</span></td>
+      <td class="num latency">{% if p.state != "skipped" %}{{ "%.1f" | format(p.seconds) }} s{% endif %}</td>
+      <td class="small">{% if p.state == "online" %}{% if p.served_by %}Served by <code>{{ p.served_by }}</code>{% endif %}{% else %}{{ p.detail }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+</div>

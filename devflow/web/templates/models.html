@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Models{% endblock %}
+{% block content %}
+<h1>Agents and models</h1>
+
+<h2>Agents</h2>
+<div class="cols even agents">
+{% for a in agents %}
+  <section class="agent">
+    <div class="heading-row"><h3>{{ a.name }}</h3><span class="tag {{ {'ready': 'ok', 'working': 'run', 'limited': 'gate', 'missing': 'bad', 'error': 'bad'}[a.state] }}">{{ a.state }}</span></div>
+    <p class="small muted">{{ a.role | capitalize }}. {{ a.detail | capitalize }}.</p>
+    <dl class="facts">
+      <dt>Model</dt><dd><code>{{ a.model }}</code></dd>
+      <dt>Installed</dt><dd>{% if a.path %}{{ a.version or "version unknown" }} <span class="muted small">{{ a.path }}</span>{% else %}<span class="tag bad">not found</span> install it and make sure it is on PATH{% endif %}</dd>
+      {% if a.server %}<dt>Server</dt><dd><code>{{ a.server }}</code></dd>{% endif %}
+      <dt>Today</dt><dd>{{ a.runs_today }} runs, {{ a.tokens_today | tokens }} tokens</dd>
+      <dt>Last run</dt><dd>{% if a.last_run %}{{ a.last_run.astimezone().strftime("%d %b %H:%M") }}, {{ a.last_outcome }}{% else %}<span class="muted">none yet</span>{% endif %}</dd>
+    </dl>
+  </section>
+{% endfor %}
+</div>
+
+{% if not gw %}
+  <p class="lede">The worker uses opencode's own providers (<code>{{ settings.opencode_model or "opencode default" }}</code>). There is no AI gateway to check.</p>
+  <p>To route the worker through OmniRoute, 9Router, LiteLLM or OpenRouter, add this to the config file and restart devflow. <a href="/help#models">How it works</a>.</p>
+<pre class="block">[gateway]
+base_url = "http://127.0.0.1:20128/v1"
+api_key_env = "DEVFLOW_GATEWAY_KEY"
+models = ["devflow-worker"]</pre>
+{% else %}
+  <h2>Worker gateway</h2>
+  <div class="summary">
+    <div class="fig"><b>{% if gw_up %}<span class="tag ok">up</span>{% else %}<span class="tag bad">not answering</span>{% endif %} {{ gw.name }}</b><span>{% if status.up %}{{ status.detail }}{% elif gw_up %}models answer; the model list didn't: {{ status.detail }}{% else %}{{ status.detail }}{% endif %}</span></div>
+    <div class="fig"><b><code>{{ settings.opencode_model }}</code></b><span>worker model for every project{% if overrides %} except {{ overrides | length }}{% endif %}</span></div>
+    <div class="fig"><b>{% if gw.free_only %}Free tier only{% else %}Any model{% endif %}</b><span>{% if gw.free_only %}paid models are refused{% else %}set free_only = true to refuse paid models{% endif %}</span></div>
+  </div>
+
+  {% for c in combos %}
+  <div class="note {{ 'ok' if c.free else 'bad' }}">{% if c.free %}Every model in combo <code>{{ c.name }}</code> is free.{% else %}{{ c.detail }}. The worker will not run until this is fixed.{% endif %}</div>
+  {% endfor %}
+
+  <div class="heading-row">
+    <h2>Which worker models answer now</h2>
+    <button type="button" hx-post="/models/check" hx-target="#probes" hx-swap="outerHTML" hx-disabled-elt="this"><span class="when-idle">Check again</span><span class="when-busy">Checking…</span></button>
+  </div>
+  {% include "_probes.html" %}
+
+  <div class="cols even">
+    <section>
+      <h2>Configured for the worker</h2>
+      <ul class="list">{% for m in gw.models %}<li><code>{{ m }}</code>{% if loop.first %} <span class="tag">default</span>{% endif %} {% if m in status.missing %}<span class="tag bad">not served by the gateway</span>{% endif %}</li>{% endfor %}</ul>
+      {% if overrides %}<h3>Projects with their own model</h3>
+      <ul class="list">{% for n, m in overrides %}<li>{{ n }}: <code>{{ m }}</code></li>{% endfor %}</ul>{% endif %}
+    </section>
+    <section>
+      <h2>Endpoint</h2>
+      <dl class="facts"><dt>URL</dt><dd><code>{{ gw.base_url }}</code></dd><dt>Provider id</dt><dd><code>{{ gw.provider_id }}</code></dd>
+      <dt>Key</dt><dd>{% if gw.api_key_env %}from <code>{{ gw.api_key_env }}</code>{% else %}none{% endif %}</dd>
+      <dt>Gateway lists</dt><dd>{{ status.served | length }} models</dd></dl>
+    </section>
+  </div>
+{% endif %}
+{% endblock %}

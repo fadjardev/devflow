@@ -1,6 +1,7 @@
 """The `devflow` command: run the bot, write a config, check the setup.
 
-    devflow [--config FILE] [run]       run the Telegram bot
+    devflow [--config FILE] [run]       run the Telegram bot (--dashboard: and the dashboard)
+    devflow [--config FILE] dashboard   run with the local web dashboard, no Telegram
     devflow [--config FILE] doctor [--fix]
     devflow init                        write devflow.toml interactively
     devflow migrate-env                 write devflow.toml from the old .env
@@ -10,13 +11,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import __version__, config, projects, security, vhosts
+import httpx
+
+from . import __version__, config, gateway, projects, security, vhosts
 
 # -- doctor ---------------------------------------------------------------------------------
 
@@ -30,10 +34,15 @@ def doctor(settings: config.Settings, fix: bool = False, config_file: Path | Non
 
     print("devflow doctor")
     print(f"  --   settings: {settings.source}")
-    line(bool(settings.telegram_token), "Telegram token set")
-    line(bool(settings.allowed_chat_id), "Telegram chat id set")
-    if settings.allowed_chat_id < 0:
-        line(bool(settings.allowed_user_ids), "user ids set for the group chat")
+    if settings.telegram_token or settings.allowed_chat_id:
+        line(bool(settings.telegram_token), "Telegram token set")
+        line(bool(settings.allowed_chat_id), "Telegram chat id set")
+        if settings.allowed_chat_id < 0:
+            line(bool(settings.allowed_user_ids), "user ids set for the group chat")
+    else:
+        print("  --   no Telegram configured: use the dashboard (devflow dashboard)")
+    print(f"  --   dashboard: http://127.0.0.1:{settings.dashboard.port}"
+          + (" (also started by devflow run)" if settings.dashboard.enabled else ""))
     private = [("runtime folder", config.runtime_dir())]
     private.append(("config file", config_file) if config_file else (".env", config.REPO_ROOT / ".env"))
     for what, path in private:
@@ -53,6 +62,25 @@ def doctor(settings: config.Settings, fix: bool = False, config_file: Path | Non
          else f"allowed: {', '.join(settings.worker_shell_allow) or 'nothing'}")
     for exe in ("claude", "opencode", "git"):
         line(bool(shutil.which(exe)), f"{exe} on PATH", shutil.which(exe) or "")
+    if settings.gateway:
+        gw = settings.gateway
+        st = gateway.check(gw)
+        line(st.up and not st.missing, f"AI gateway ({gw.name})", st.detail)
+        if gw.api_key_env and not os.environ.get(gw.api_key_env):
+            line(False, "gateway key", f"{gw.api_key_env} is not set in the environment")
+        print(f"  --   worker model: {settings.opencode_model}")
+        if gw.free_only:
+            print("  --   free_only: every worker model must be a free tier")
+            for combo in gw.free_combos:
+                cc = gateway.check_combo(gw, combo)
+                line(cc.free, f"free combo {combo}", cc.detail)
+        try:
+            httpx.get(settings.opencode_url + "/path", timeout=2)
+            print(f"  --   opencode already answers on {settings.opencode_url}: devflow did not start it, so the "
+                  f"gateway provider is registered only if that server was started with devflow's "
+                  f"{config.runtime_dir() / 'opencode.json'}")
+        except httpx.HTTPError:
+            pass
     try:
         sites: vhosts.Provider | None = vhosts.get(settings)
     except (ValueError, vhosts.VhostError) as e:
@@ -196,7 +224,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--config", type=Path, help="devflow.toml to use (default: DEVFLOW_CONFIG, then "
                                                    f"{config.default_config()}, then the legacy .env)")
     sub = parser.add_subparsers(dest="command")
-    sub.add_parser("run", help="run the Telegram bot (the default)")
+    r = sub.add_parser("run", help="run the Telegram bot (the default)")
+    r.add_argument("--dashboard", action=argparse.BooleanOptionalAction, default=None,
+                   help="also serve the local dashboard (default: dashboard.enabled)")
+    w = sub.add_parser("dashboard", help="run devflow with the local web dashboard and no Telegram")
+    w.add_argument("--url", action="store_true", help="print the dashboard's login link and exit")
     d = sub.add_parser("doctor", help="check the setup")
     d.add_argument("--fix", action="store_true", help="make the config and runtime folder private")
     for name, what in (("init", "write devflow.toml interactively"), ("migrate-env", "write devflow.toml from .env")):
@@ -216,8 +248,15 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "doctor":
         used = Path(settings.source) if settings.registry is not None else None  # the TOML that was read
         raise SystemExit(doctor(settings, fix=args.fix, config_file=used))
+    if args.command == "dashboard":
+        from .web import server
+        if args.url:
+            print(server.login_url(settings))
+            return None
+        server.run_standalone(settings)
+        return None
     from .bot import main as run_bot
-    run_bot(settings)
+    run_bot(settings, getattr(args, "dashboard", None))
 
 
 if __name__ == "__main__":

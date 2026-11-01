@@ -1,0 +1,4 @@
+{% for m in meters %}
+<div class="fig"><b>{{ m.amount() }}</b><span>{{ m.label | capitalize }}</span>
+  <span class="meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ([m.fraction, 1] | min * 100) | round(0) }}" aria-label="{{ m.label }}"><i style="width: {{ ([m.fraction, 1] | min * 100) | round(0) }}%" class="{{ 'bad' if m.fraction >= 1 else 'warn' if m.fraction >= 0.8 else '' }}"></i></span></div>
+{% endfor %}

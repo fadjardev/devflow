@@ -1,0 +1,11 @@
+<a class="card{% if c.gate %} at-gate{% endif %}" href="/tasks/{{ c.id }}">
+  <div class="card-top"><code>{{ c.id }}</code><span>{{ c.project }}</span></div>
+  <div class="card-title">{{ c.title or "Untitled request" }}</div>
+  {% if c.running or c.gate or c.reason %}
+  <div class="card-flags">
+    {% if c.running %}<span class="tag run">working</span>{% endif %}
+    {% if c.gate %}<span class="tag gate">approve at gate {{ c.gate }}</span>{% endif %}
+    {% if c.reason %}<span class="tag bad">{{ c.reason }}</span>{% endif %}
+  </div>
+  {% endif %}
+</a>

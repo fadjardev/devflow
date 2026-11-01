@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Ask{% endblock %}
+{% block content %}
+<div class="cols">
+  <div>
+  {% if conv %}
+    {% include "_conversation.html" %}
+  {% else %}
+    <h1>Ask about the code</h1>
+    <p class="lede">Claude reads the code and your notes to answer. It changes nothing.</p>
+    <form class="form" hx-post="/ask" hx-target="#flash" hx-disabled-elt="find button">
+      <label>Project
+        <select name="project" required>
+          <option value="all">All projects</option>
+          {% for n in names %}<option>{{ n }}</option>{% endfor %}
+        </select>
+        <span class="hint">Not in the list? <a href="/projects#add">Add the project</a> first.</span>
+      </label>
+      <label>Question <textarea name="question" rows="4" required placeholder="Where is checkout validated?"></textarea></label>
+      <div><button class="primary"><span class="when-idle">Ask</span><span class="when-busy">Sending…</span></button></div>
+    </form>
+  {% endif %}
+  </div>
+  <section>
+    <div class="heading-row"><h2>Conversations</h2>{% if conv %}<a class="small" href="/ask">New question</a>{% endif %}</div>
+    <ul class="list">
+      {% for c in conversations %}<li><a href="/ask/{{ c.id }}">{{ c.turns[0][0][:70] }}</a> <span class="muted small">{{ c.label }}</span>{% if c.busy %} <span class="tag run">answering</span>{% endif %}</li>
+      {% else %}<li class="muted">None yet. Conversations last until devflow restarts.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}

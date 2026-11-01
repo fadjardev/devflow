@@ -1,0 +1,43 @@
+{% if not partial %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}devflow{% endblock %} · devflow</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body hx-headers='{"X-CSRF": "{{ csrf }}"}'>
+<div class="shell">
+<aside class="side">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>devflow</a>
+  {% set nav_groups = [
+    ("Work", [("/", "Board"), ("/tasks/new", "New task"), ("/ask", "Ask")]),
+    ("Watch", [("/usage", "Usage"), ("/models", "Agents & models"), ("/logs", "Logs")]),
+    ("Setup", [("/projects", "Projects"), ("/help", "Help")]),
+  ] %}
+  <nav aria-label="Main">
+  {% for group, links in nav_groups %}
+    <div class="nav-group">
+      <span class="nav-title">{{ group }}</span>
+      {% for href, label in links %}
+      <a href="{{ href }}" {% if path == href or (href not in ("/", "/tasks/new") and path.startswith(href)) or (href == "/" and path.startswith("/tasks/") and path != "/tasks/new") %}aria-current="page"{% endif %}>
+        <span>{{ label }}</span>
+        {% if href == "/" and waiting %}<span class="count gate" title="{{ waiting }} waiting for your approval">{{ waiting }}</span>{% endif %}
+        {% if href == "/models" and online %}<span class="count {{ 'ok' if online.up else 'bad' }}" title="models answering at the last check">{{ online.up }}/{{ online.of }}</span>{% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  {% endfor %}
+  </nav>
+  <p class="side-foot">Worker <code>{{ settings.opencode_model or "opencode default" }}</code>{% if settings.gateway and settings.gateway.free_only %}<br><span class="tag ok">free tier only</span>{% endif %}</p>
+</aside>
+<div class="page">
+<div id="flash" aria-live="polite"></div>
+<main>{% endif %}
+{% block content %}{% endblock %}
+{% if not partial %}</main>
+</div>
+</div>
+</body>
+</html>{% endif %}

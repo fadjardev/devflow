@@ -23,6 +23,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 from . import fmt, logs, redact
 from .config import Settings, runtime_dir
 from .pipeline import Asked, Flow, FlowError
+from .runtime import Runtime
 from .tasks import ID_RE
 from .vault import VaultError
 
@@ -379,45 +380,40 @@ async def _ignored(update: Update, ctx):
     log.warning("ignored message from chat %s", chat.id if chat else "?")
 
 
-async def _resume_loop(flow: Flow) -> None:
-    """Every minute: resume tasks whose provider limit has reset (limits.auto_resume)."""
-    while True:
-        await asyncio.sleep(60)
-        try:
-            await flow.resume_due()
-        except Exception:
-            log.exception("auto-resume check failed")
-
-
-def build(settings: Settings) -> Application:
+def build(settings: Settings, dashboard: bool | None = None) -> Application:
+    """The bot; with `dashboard` (default: dashboard.enabled) the local dashboard runs beside it."""
+    web = settings.dashboard.enabled if dashboard is None else dashboard
     redact.add(settings.telegram_token)
     if not settings.telegram_token or not settings.allowed_chat_id:
-        raise SystemExit("set TELEGRAM_TOKEN and ALLOWED_CHAT_ID in devflow/.env")
+        raise SystemExit("set telegram.token and telegram.chat_id (or TELEGRAM_TOKEN and ALLOWED_CHAT_ID), "
+                         "or run without Telegram: devflow dashboard")
     if settings.allowed_chat_id < 0 and not settings.allowed_user_ids:
         # In a group every member could /approve, /diff and /ask; name who may.
         raise SystemExit("ALLOWED_CHAT_ID is a group: set ALLOWED_USER_IDS to the members who may use the bot")
 
     async def on_start(app: Application) -> None:
         logs.watch_loop(asyncio.get_running_loop())
-        flow = Flow(settings, TelegramNotifier(app, settings.allowed_chat_id))
-        app.bot_data["flow"] = flow
+        rt = Runtime(settings)
+        rt.notifier.add(TelegramNotifier(app, settings.allowed_chat_id))
+        app.bot_data["runtime"], app.bot_data["flow"] = rt, rt.flow
+        if web:
+            from .web import server
+            app.bot_data["web"] = await server.start_embedded(rt)
         try:  # only in the allowed chat: a stranger who finds the bot sees no menu
             await app.bot.set_my_commands([BotCommand(c, d) for c, d in MENU],
                                           scope=BotCommandScopeChat(settings.allowed_chat_id))
         except Exception:
             log.warning("could not set the command menu", exc_info=True)
-        await flow.recover()
-        if settings.budget.auto_resume:
-            app.bot_data["resumer"] = asyncio.create_task(_resume_loop(flow))
-        await flow.n.text("🟢 devflow up. /help")
+        await rt.start()
+        await rt.flow.n.text("🟢 devflow up. /help")
 
     async def on_stop(app: Application) -> None:
-        resumer = app.bot_data.get("resumer")
-        if resumer:
-            resumer.cancel()
-        flow = app.bot_data.get("flow")
-        if flow:
-            await flow.close()
+        site = app.bot_data.get("web")
+        if site:
+            await site.stop()
+        rt = app.bot_data.get("runtime")
+        if rt:
+            await rt.stop()
 
     # PTB's default 5-second timeouts are too tight for this connection to Telegram (seen:
     # ConnectTimeout on the TLS handshake), so give every request more room.
@@ -439,12 +435,12 @@ def build(settings: Settings) -> Application:
     return app
 
 
-def main(settings: Settings) -> None:
+def main(settings: Settings, dashboard: bool | None = None) -> None:
     logs.setup("devflow")
     # The MCP servers can't rotate their own logs; do it now, while none is running.
     for name in ("mcp", "mcp-errors"):
         logs.roll(name)
     log.info("devflow starting (max %d workers, base %s/%s)", settings.max_workers,
              settings.git_remote, settings.base_branch)
-    build(settings).run_polling(allowed_updates=Update.ALL_TYPES)
+    build(settings, dashboard).run_polling(allowed_updates=Update.ALL_TYPES)
     log.info("devflow stopped")

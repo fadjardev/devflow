@@ -81,12 +81,18 @@ def _title_parts(t: tasks.Task) -> tuple[str, str, str]:
 class Flow:
     def __init__(self, settings: Settings, notifier: Notifier):
         self.s = settings
-        self.store = TaskStore(settings.vault, known=lambda p: p in projects.names(settings))
+        self.store = TaskStore(settings.vault, known=lambda p: p in projects.names(self.s))
         self.n = notifier
         self.oc = opencode.Client(settings)
         self.spend = Spending(settings.budget, UsageDB(), self.notify)
         self.jobs: dict[str, asyncio.Task] = {}
         self.ask_slots = asyncio.Semaphore(ASK_SLOTS)
+
+    def use_settings(self, settings: Settings) -> None:
+        """New settings while running (a project added from the dashboard). Running jobs keep
+        what they already read; everything after uses these."""
+        self.s = settings
+        self.oc.settings = settings
 
     # -- plumbing ----------------------------------------------------------
 
@@ -381,14 +387,27 @@ class Flow:
         finally:
             logs.task_id.reset(token)
 
+    def running(self, t: tasks.Task) -> bool:
+        return t.id in self.jobs
+
+    def at_gate(self, t: tasks.Task) -> int:
+        """1 or 2 when the task waits for a human's /approve, else 0."""
+        if self.running(t):
+            return 0
+        if t.state == "planned":
+            return 1
+        if t.state == "review" and t.meta.get("review_verdict") == "approve":
+            return 2
+        return 0
+
     def status(self) -> str:
         active = self.store.active()
         if not active:
             return "No active tasks."
         lines = []
         for t in active:
-            flag = " ⏳" if t.id in self.jobs else ""
-            gate = " — awaiting /approve" if (t.state == "planned" or t.meta.get("review_verdict") == "approve") and not flag else ""
+            flag = " ⏳" if self.running(t) else ""
+            gate = " — awaiting /approve" if self.at_gate(t) else ""
             lines.append(f"{t.id} · {t.project} · {t.state}{flag}{gate}\n   {t.meta.get('title', '')}")
         return "\n".join(lines)
 
@@ -523,7 +542,8 @@ class Flow:
         self.spend.before("opencode", task_id, int(t.meta.get("budget_rounds") or 0))
         before, started = await self.oc.session_usage(session, wt), time.monotonic()
         try:
-            reply = await self.oc.prompt(session, wt, prompt, WORKER_TIMEOUT, on_denied=denied)
+            reply = await self.oc.prompt(session, wt, prompt, WORKER_TIMEOUT, on_denied=denied,
+                                         model_name=self._ps(t).opencode_model or None)
         except opencode.OpencodeLimit as e:
             await self.spend.after(task_id, "worker", "opencode", "",
                                    await self.oc.session_usage(session, wt) - before,

@@ -40,6 +40,30 @@ def resolve(settings: Settings, query: str) -> str:
                      f"Any unique part of a name works, e.g. asm.")
 
 
+def candidates(settings: Settings, limit: int = 300) -> list[Path]:
+    """Git checkouts that could be added: the projects folder's children, and one level more
+    under its parent (a workspace like D:/work-dev/{Github,Gitlab}/<repo>). Registered ones left out."""
+    if settings.projects is None:
+        return []
+    taken = {p.path.resolve() for p in (settings.registry or {}).values()}
+    roots = [settings.projects] + [d for d in sorted(settings.projects.parent.iterdir())
+                                   if d.is_dir() and d != settings.projects and not d.name.startswith(".")]
+    found: list[Path] = []
+    for root in roots:
+        if (root / ".git").exists():
+            continue  # a repository itself, not a folder of them
+        try:
+            children = sorted(root.iterdir())
+        except OSError:
+            continue
+        for d in children:
+            if d.is_dir() and not d.name.startswith(".") and (d / ".git").exists() and d.resolve() not in taken:
+                found.append(d)
+                if len(found) >= limit:
+                    return found
+    return found
+
+
 def _bullets(items: list[str]) -> str:
     return "\n".join(f"- {i}" for i in items)
 

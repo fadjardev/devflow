@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Diff {{ task_id }}{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">Board</a> / <a href="/tasks/{{ task_id }}">{{ task_id }}</a></p>
+<h1>Diff of <code>{{ task_id }}</code></h1>
+<pre class="diff">{% for kind, line in lines %}<span class="{{ kind }}">{{ line }}</span>
+{% endfor %}</pre>
+{% endblock %}

@@ -132,6 +132,7 @@ def test_permission_watchdog_survives_a_failing_callback(logdir, tmp_path, monke
     async def main():
         client = opencode.Client(config.load())
         client.http = httpx.AsyncClient(base_url="http://x", transport=httpx.MockTransport(handle))
+        client.api = 1  # the v1 permission routes this fake serves
         dog = asyncio.create_task(client._watch_permissions("s1", tmp_path, denied))
         while len(polls) < 4:
             await real_sleep(0)

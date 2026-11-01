@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Usage{% endblock %}
+{% block content %}
+<h1>Usage</h1>
+<p class="lede">The last {{ days }} days, from devflow's own record of every agent run. Free models report no cost, so watch tokens for them.</p>
+<div class="summary">
+  <div class="fig"><b>{{ total.tokens | tokens }}</b><span>tokens</span></div>
+  <div class="fig"><b>{{ total.cost | money }}</b><span>reported cost</span></div>
+  <div class="fig"><b>{{ total.runs }}</b><span>runs, {{ total.failed }} not ok</span></div>
+  {% include "_meters.html" %}
+</div>
+
+<h2>Tokens per day</h2>
+<div class="bars" role="img" aria-label="Tokens per day over the last {{ days }} days">
+  {% for day, t in daily %}
+  <div class="bar" title="{{ day }}: {{ t.tokens | tokens }} tokens, {{ t.cost | money }}, {{ t.runs }} runs">
+    <i style="height: {{ (t.tokens / peak * 100) | round(1) }}%"></i><small>{{ day[3:] }}</small>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="cols three">
+{% for key, title in [("backend", "By backend"), ("role", "By role"), ("model", "By model")] %}
+  <section>
+    <h2>{{ title }}</h2>
+    <table><thead><tr><th scope="col">{{ key | capitalize }}</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th><th scope="col" class="num">Runs</th></tr></thead><tbody>
+    {% for name, t in groups[key] %}<tr><td>{% if key == "model" %}<code>{{ name }}</code>{% else %}{{ name }}{% endif %}</td><td class="num">{{ t.tokens | tokens }}</td><td class="num">{{ t.cost | money }}</td><td class="num">{{ t.runs }}</td></tr>
+    {% else %}<tr><td colspan="4" class="muted">No runs yet.</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+{% endfor %}
+</div>
+
+<h2>Tasks that used the most</h2>
+<div class="table-wrap"><table><thead><tr><th scope="col">Task</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Cost</th><th scope="col" class="num">Runs</th></tr></thead><tbody>
+{% for name, t in top %}<tr><td>{% if name[:1].isdigit() %}<a href="/tasks/{{ name }}"><code>{{ name }}</code></a>{% else %}<code>{{ name }}</code>{% endif %}</td><td class="num">{{ t.tokens | tokens }}</td><td class="num">{{ t.cost | money }}</td><td class="num">{{ t.runs }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">No runs yet.</td></tr>{% endfor %}
+</tbody></table></div>
+{% endblock %}

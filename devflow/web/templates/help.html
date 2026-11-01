@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Help{% endblock %}
+{% block content %}
+<h1>How to use devflow</h1>
+<p class="lede">Claude plans and reviews, a cheaper model writes the code, and you approve twice: the plan, then the change. devflow never merges or pushes.</p>
+<div class="help">
+<nav class="help-toc" aria-label="On this page">
+  <a href="#start">Start a task</a>
+  <a href="#life">A task's life</a>
+  <a href="#gates">The two gates</a>
+  <a href="#ask">Ask about code</a>
+  <a href="#models">Models and free tier</a>
+  <a href="#usage">Usage and budgets</a>
+  <a href="#telegram">Telegram</a>
+  <a href="#trouble">When something goes wrong</a>
+  <a href="#run">Running devflow</a>
+</nav>
+<article>
+<section id="start">
+  <h2>Start a task</h2>
+  <ol class="steps">
+    <li>Open <a href="/tasks/new">New task</a>, choose the project and describe the result you want. For a bug, say what happens and what should happen.</li>
+    <li>Wait for the plan. The task shows in <em>Planning</em>, then in <em>Plan ready</em> with an amber mark when it reaches gate 1.</li>
+    <li>Open the task, read the Spec, and approve it, or send it back with what to change.</li>
+    <li>The worker codes in its own git worktree, devflow runs your checks, and Claude reviews the diff.</li>
+    <li>At gate 2, read the changed files, the review and the checks, then approve. The branch is kept for you to merge.</li>
+  </ol>
+  <p>The list shows the projects in the config file. To add one, open <a href="/projects#add">Projects</a>, pick a repository or type the folder of its git checkout, and add it. It is usable at once.</p>
+</section>
+
+<section id="life">
+  <h2>A task's life</h2>
+  <table>
+    <thead><tr><th scope="col">Stage</th><th scope="col">What happens</th><th scope="col">Who moves it on</th></tr></thead>
+    <tbody>
+      <tr><td>Planning</td><td>Claude reads the code and your notes and writes the Spec. It may ask you a question.</td><td>Claude</td></tr>
+      <tr><td>Plan ready</td><td>The Spec waits at gate 1.</td><td>You</td></tr>
+      <tr><td>Coding</td><td>The worker implements the Spec on branch <code>devflow/…</code>; devflow commits and runs lint and tests.</td><td>devflow</td></tr>
+      <tr><td>Review</td><td>Claude reads the diff and the evidence. It approves or sends fix-ups back to the worker, up to the configured limit.</td><td>Claude</td></tr>
+      <tr><td>Done</td><td>You approved at gate 2. The worktree is removed, the branch stays.</td><td>You</td></tr>
+      <tr><td>Blocked</td><td>Something failed, a limit was hit, or devflow restarted mid-step. The reason is on the task.</td><td>You: retry or stop</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="gates">
+  <h2>The two gates</h2>
+  <p><strong>Gate 1, the plan.</strong> Approve to create the branch and start coding. Send it back to change the plan; the text you write goes to the planner. If the planner asked a question, your answer goes the same way.</p>
+  <p><strong>Gate 2, the change.</strong> Approve to finish the task. Send it back to ask the worker for a fix. If the base branch moved and the change no longer merges cleanly, approval is refused until you use <em>Catch up with base</em>.</p>
+  <p><em>Stop task</em> cancels at any stage and keeps the branch.</p>
+</section>
+
+<section id="ask">
+  <h2>Ask about code</h2>
+  <p><a href="/ask">Ask</a> answers questions about one project or all of them, such as "where is checkout validated?". It only reads. Follow-up questions keep the context of the conversation until devflow restarts.</p>
+</section>
+
+<section id="models">
+  <h2>Models and free tier</h2>
+  <p><a href="/models">Agents and models</a> shows whether Claude Code and opencode are installed, their version, the last run, today's use and any usage limit. The opencode server only runs while a task is coding; "starts when a task reaches coding" is normal.</p>
+  <p>Planning, review and Ask always use Claude Code. The worker uses the model in the config file, usually through an AI gateway such as OmniRoute that tries several free providers in turn.</p>
+  <p><a href="/models">Models</a> sends each model one short request and shows which answer now. <em>Rate limited</em> means that provider's free quota is used up for now; the gateway moves on to the next model. When every model is limited, the task is blocked with the reset time.</p>
+  <p>With <code>free_only = true</code> in <code>[gateway]</code>, devflow refuses any worker model that is not a free tier, and checks the models inside each combo before every run. For a guarantee on the account side, set the credit limit of the provider key to 0.</p>
+</section>
+
+<section id="usage">
+  <h2>Usage and budgets</h2>
+  <p><a href="/usage">Usage</a> shows tokens and reported cost per day, backend, role and model. Free models report no cost, so their budget is in tokens. Budgets in <code>[budget]</code> can warn you, refuse new tasks, or stop running ones.</p>
+</section>
+
+<section id="telegram">
+  <h2>Telegram</h2>
+  <p>The dashboard and the Telegram bot drive the same tasks, and both receive every message. The buttons here match these commands:</p>
+  <table>
+    <thead><tr><th scope="col">Dashboard</th><th scope="col">Telegram</th></tr></thead>
+    <tbody>
+      <tr><td>New task</td><td><code>/task project request</code></td></tr>
+      <tr><td>Approve gate 1 or 2</td><td><code>/approve id</code></td></tr>
+      <tr><td>Send back</td><td><code>/reject id reason</code>, <code>/answer id answer</code></td></tr>
+      <tr><td>Retry, Catch up with base, Stop task</td><td><code>/retry id</code>, <code>/refresh id</code>, <code>/stop id</code></td></tr>
+      <tr><td>Ask</td><td><code>/ask project question</code></td></tr>
+      <tr><td>Usage, Logs</td><td><code>/usage</code>, <code>/limits</code>, <code>/log</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="trouble">
+  <h2>When something goes wrong</h2>
+  <table>
+    <thead><tr><th scope="col">You see</th><th scope="col">What to do</th></tr></thead>
+    <tbody>
+      <tr><td>Blocked: parked</td><td>devflow restarted during a step. Retry.</td></tr>
+      <tr><td>Blocked: limit</td><td>A provider's quota ran out. Wait for the reset shown on the task, or turn on <code>auto_resume</code> in <code>[limits]</code>.</td></tr>
+      <tr><td>Blocked: free_only refused</td><td>A combo now contains a paid model, or the gateway did not answer. Fix the combo on <a href="/models">Models</a>, then retry.</td></tr>
+      <tr><td>Blocked: error</td><td>Open <a href="/logs">Logs</a> for the task, fix the cause, then retry.</td></tr>
+      <tr><td>The gateway is down</td><td>Start it again (for OmniRoute: <code>omniroute</code>), then <code>devflow doctor</code>.</td></tr>
+      <tr><td>Logged out</td><td>Run <code>devflow dashboard --url</code> and open the link it prints.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="run">
+  <h2>Running devflow</h2>
+<pre>devflow dashboard           the dashboard alone, no Telegram
+devflow dashboard --url     print the login link again
+devflow run --dashboard     Telegram and the dashboard together
+devflow doctor              check the setup, the gateway and the models</pre>
+  <p>The config file is <code>{{ settings.source }}</code>. The dashboard only accepts connections from this computer.</p>
+</section>
+</article>
+</div>
+{% endblock %}

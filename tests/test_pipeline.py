@@ -46,7 +46,7 @@ class FakeOpencode:
     async def create_session(self, directory, title, rules=None):
         return "ses_fake"
 
-    async def prompt(self, session, directory, text, timeout, on_denied=None):
+    async def prompt(self, session, directory, text, timeout, on_denied=None, model_name=None):
         self.prompts.append(text)
         if "conflicted in" in text:
             (directory / "shared.txt").write_text("one\nCOLLEAGUE and TASK\nthree\n")

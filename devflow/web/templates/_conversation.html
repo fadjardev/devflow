@@ -1,0 +1,16 @@
+<div id="conv" {% if conv.busy %}hx-get="/ask/{{ conv.id }}" hx-trigger="every 3s" hx-swap="outerHTML"{% endif %}>
+  <p class="crumb"><a href="/ask">Ask</a></p>
+  <h1>{{ conv.label }}</h1>
+  {% for q, a in conv.turns %}
+    <div class="q">{{ q }}</div>
+    {% if a %}<div class="a md">{{ a | md }}</div>
+    {% elif conv.busy and loop.last %}<div class="a muted">Reading the code. Answers usually take a minute or two.</div>{% endif %}
+  {% endfor %}
+  {% if conv.error %}<div class="note bad">{{ conv.error }}</div>{% endif %}
+  {% if not conv.busy %}
+  <form class="form" hx-post="/ask/{{ conv.id }}" hx-target="#conv" hx-select="#conv" hx-swap="outerHTML" style="margin-top: 1.25rem">
+    <label>Follow up <textarea name="question" rows="2" required></textarea></label>
+    <div><button>Ask again</button></div>
+  </form>
+  {% endif %}
+</div>

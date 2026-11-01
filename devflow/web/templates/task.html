@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ t.id }}{% endblock %}
+{% block content %}
+{# Refreshes every 10 s so steps taken on Telegram show up here too, but never while a reason is being typed. #}
+<div id="task" hx-get="/tasks/{{ t.id }}" hx-trigger="devflow-changed from:body, every 10s [document.activeElement.tagName !== 'TEXTAREA']" hx-select="#task" hx-swap="outerHTML">
+<div class="task-head">
+  <div>
+    <p class="crumb"><a href="/">Board</a> / {{ t.project }}</p>
+    <h1><code>{{ t.id }}</code> {{ meta.title_line or t.title or "Untitled request" }}</h1>
+    <p>
+      <span class="tag state-{{ t.state }}">{{ t.state }}</span>
+      {% if t.running %}<span class="tag run">working now</span>{% endif %}
+      {% if t.reason %}<span class="tag bad">{{ t.reason }}</span>{% endif %}
+    </p>
+    <dl class="facts">
+      <dt>Branch</dt><dd>{% if meta.branch %}<code>{{ meta.branch }}</code>{% else %}<span class="muted">made at gate 1</span>{% endif %}</dd>
+      <dt>Based on</dt><dd>{% if meta.base_ref %}<code>{{ meta.base_ref }} {{ (meta.base or "")[:8] }}</code>{% else %}<span class="muted">not yet</span>{% endif %}</dd>
+      {% if meta.vhost %}<dt>Preview</dt><dd><a href="https://{{ meta.vhost }}" target="_blank" rel="noopener">{{ meta.vhost }}</a></dd>{% endif %}
+      <dt>Used</dt><dd>{{ usage.tokens | tokens }} tokens, {{ usage.cost_usd | money }}</dd>
+    </dl>
+  </div>
+
+  {% if actions %}
+  <form class="decide{% if t.gate %} at-gate{% endif %}" hx-target="#flash" hx-swap="innerHTML" onsubmit="return false">
+    {% if t.gate == 1 %}
+      <h2>Gate 1: approve the plan</h2>
+      <p class="small muted">Approving creates the branch and starts the worker. To change the plan, or to answer the planner's question, write it below and send it back.</p>
+    {% elif t.gate == 2 %}
+      <h2>Gate 2: approve the change</h2>
+      <p class="small muted">Approving keeps the branch and removes the worktree. You merge it yourself. To ask for a fix, describe it below.</p>
+    {% elif t.state == "blocked" %}
+      <h2>This task is blocked</h2>
+      <p class="small muted">Read the history and the log, then retry from where it stopped, or stop it.</p>
+    {% else %}
+      <h2>Actions</h2>
+    {% endif %}
+    {% if "approve" in actions %}<button type="button" class="go" hx-post="/tasks/{{ t.id }}/approve" hx-disabled-elt="this"><span class="when-idle">Approve gate {{ t.gate }}</span><span class="when-busy">Approving…</span></button>{% endif %}
+    {% if "reject" in actions %}
+      <textarea name="reason" rows="3" aria-label="Reason" placeholder="{{ 'What to change in the plan, or your answer to its question' if t.gate == 1 else 'What the worker should fix' }}"></textarea>
+      <button type="button" hx-post="/tasks/{{ t.id }}/reject" hx-include="closest form" hx-disabled-elt="this">Send back</button>
+    {% endif %}
+    <div class="row">
+      {% if "retry" in actions %}<button type="button" class="primary" hx-post="/tasks/{{ t.id }}/retry" hx-disabled-elt="this">Retry</button>{% endif %}
+      {% if "refresh" in actions %}<button type="button" hx-post="/tasks/{{ t.id }}/refresh" hx-disabled-elt="this" title="Rebase the work on the latest base branch">Catch up with base</button>{% endif %}
+      {% if "stop" in actions %}<button type="button" class="danger" hx-post="/tasks/{{ t.id }}/stop" hx-confirm="Stop {{ t.id }}? The branch is kept; the task is cancelled." hx-disabled-elt="this">Stop task</button>{% endif %}
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+{% if stat or shot %}
+<div class="cols">
+  {% if stat %}<section>
+    <div class="heading-row"><h2>Changed files</h2><a class="small" href="/tasks/{{ t.id }}/diff">Open the full diff</a></div>
+    <pre class="block">{{ stat }}</pre>
+  </section>{% endif %}
+  {% if shot %}<section>
+    <h2>Screenshot after the change</h2>
+    <a href="/tasks/{{ t.id }}/shot.png" target="_blank"><img class="shot" src="/tasks/{{ t.id }}/shot.png" alt="Screenshot of {{ t.id }} after the change"></a>
+  </section>{% endif %}
+</div>
+{% endif %}
+
+<div class="cols">
+  <div>
+    <h2>Task note</h2>
+    {% for name, body in sections if body.strip() %}
+      <details class="section" {% if name in ("Request", "Spec", "Review", "Verification") %}open{% endif %}>
+        <summary>{{ name }}</summary>
+        <div class="md">{{ body | md }}</div>
+      </details>
+    {% else %}<p class="muted">The note is empty so far.</p>{% endfor %}
+  </div>
+  <section>
+    <h2>Messages</h2>
+    {% include "_events.html" %}
+    <p class="small"><a href="/logs?show=all&task={{ t.id }}">Log lines for {{ t.id }}</a></p>
+  </section>
+</div>
+</div>
+{% endblock %}

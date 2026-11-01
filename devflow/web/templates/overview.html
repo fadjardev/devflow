@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Board{% endblock %}
+{% block content %}
+<div id="board" hx-get="/" hx-trigger="every 5s, devflow-changed from:body" hx-select="#board" hx-swap="outerHTML">
+<h1>Board</h1>
+
+<div class="summary">
+  <div class="fig"><b>{{ waiting }}</b><span>waiting for you</span></div>
+  <div class="fig"><b>{{ spend.tokens | tokens }}</b><span>tokens today, {{ spend.runs }} runs</span></div>
+  <div class="fig"><b>{{ spend.cost | money }}</b><span>reported cost today</span></div>
+  <div class="fig">
+    {% if online %}<b>{{ online.up }} of {{ online.of }}</b><span><a href="/models">models answering</a> at {{ online.at.strftime("%H:%M") }}</span>
+    {% elif settings.gateway %}<b>Not checked</b><span><a href="/models">Check models</a></span>
+    {% else %}<b>No gateway</b><span>worker uses opencode's default</span>{% endif %}
+  </div>
+  <div class="fig"><b>{% for a in agents %}<span class="tag {{ {'ready': 'ok', 'working': 'run', 'limited': 'gate', 'missing': 'bad', 'error': 'bad'}[a.state] }}" title="{{ a.detail }}">{{ a.name }}: {{ a.state }}</span> {% endfor %}</b><span><a href="/models">agents</a></span></div>
+  {% include "_meters.html" %}
+</div>
+
+{% for l in limits if l.hit %}
+<div class="note warn">{{ l.backend }} is at its usage limit: {{ l.reason }}{% if l.resets_at %}. It resets {{ l.resets_at.strftime("%d %b %H:%M") }}{% endif %}.</div>
+{% endfor %}
+
+{% if needs %}
+<section class="needs" aria-labelledby="needs-h">
+  <h2 id="needs-h">Needs you</h2>
+  <ul>
+  {% for c in needs %}
+    <li><a href="/tasks/{{ c.id }}" class="{{ 'blocked' if c.state == 'blocked' else '' }}">
+      <code>{{ c.id }}</code><span class="what">{{ c.project }}</span><span>{{ c.title or "Untitled request" }}</span>
+      <span class="tag {{ 'bad' if c.state == 'blocked' else 'gate' }}">{% if c.state == "blocked" %}blocked: retry or stop{% elif c.gate == 1 %}approve the plan{% else %}approve the change{% endif %}</span>
+    </a></li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<h2>Pipeline</h2>
+<div class="track" role="list" aria-label="Tasks by stage">
+  {% macro station(name, label) %}
+  <section class="station" role="listitem" aria-label="{{ label }}">
+    <div class="station-head">{{ label }} <span>{{ board[name] | length }}</span></div>
+    {% for c in board[name] %}{% include "_card.html" %}{% else %}<p class="empty">None</p>{% endfor %}
+  </section>
+  {% endmacro %}
+  {{ station("new", "Planning") }}
+  {{ station("planned", "Plan ready") }}
+  <div class="gatebar" aria-hidden="true"><span>gate 1</span></div>
+  {{ station("coding", "Coding") }}
+  {{ station("review", "Review") }}
+  <div class="gatebar" aria-hidden="true"><span>gate 2</span></div>
+  <section class="station" role="listitem" aria-label="Done">
+    <div class="station-head">Done <span>{{ finished | selectattr("state", "equalto", "done") | list | length }}</span></div>
+    {% for c in finished if c.state == "done" %}{% if loop.index <= 5 %}{% include "_card.html" %}{% endif %}{% else %}<p class="empty">None yet</p>{% endfor %}
+  </section>
+</div>
+{% if board.blocked %}
+<div class="blocked-row">
+  <h2>Blocked</h2>
+  <div class="cols three">{% for c in board.blocked %}{% include "_card.html" %}{% endfor %}</div>
+</div>
+{% endif %}
+</div>
+
+<div class="cols">
+  <section>
+    <h2>Messages</h2>
+    <div hx-get="/fragments/events" hx-trigger="every 5s" hx-swap="innerHTML">{% include "_events.html" %}</div>
+  </section>
+  <section>
+    <h2>Recently finished</h2>
+    <ul class="list">
+    {% for c in finished %}
+      <li><a href="/tasks/{{ c.id }}"><code>{{ c.id }}</code></a> <span class="tag {{ 'ok' if c.state == 'done' else '' }}">{{ c.state }}</span> {{ c.title }} <span class="muted small">{{ c.project }}</span></li>
+    {% else %}<li class="muted">Nothing finished yet. <a href="/tasks/new">Start a task</a>.</li>{% endfor %}
+    </ul>
+  </section>
+</div>
+{% endblock %}
